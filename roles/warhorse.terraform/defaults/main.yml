@@ -6,7 +6,7 @@ terraform_role_path: '{{ op_folder_location }}/{{ warhorse.general.op_number }}/
 vm_default_do_img: 'ubuntu-20-04-x64'
 vm_default_img_snapshot_name: 'warhorse-ubuntu22.04'
 vm_default_do_region: 'nyc1'
-vm_default_do_size: 's-2vcpu-4gb'
+vm_default_do_size: 's-4vcpu-8gb'
 dns_op_domain_name: "{{ warhorse.general.op_number + '.' + warhorse.dns.op_tld }}"
 
 auth_header_value: "{{ warhorse.general.op_number | b64encode }}"
