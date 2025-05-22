@@ -63,7 +63,7 @@
     src: templates/swag.yml.j2
     dest: "{{ op_folder_location }}/{{ warhorse.general.op_number }}/inventory/swag.yml"
   with_items: "{{ warhorse.vm }}"
-  when: item.http_proxy == "nginx"
+  when:  item.mythic is defined
 
 - name: Generating traefik inventory
   template:
