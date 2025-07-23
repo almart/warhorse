@@ -1,42 +1,69 @@
 ---
-- name: Create a terraform directorys 
+- name: Create Terraform directories
   ansible.builtin.file:
     path: '{{ item.folder }}'
     state: directory
     mode: '0755'
-  with_items:
-  - folder: "{{ terraform_project_path }}"
+  loop:
+    - { folder: "{{ terraform_project_path }}" }
+
+- name: Ensure warhorse variable has required keys
+  set_fact:
+    warhorse: "{{ warhorse | default({}) | combine({'providers': {}, 'terraform': {}}) }}"
 
 - name: Generating Terraform Variables
   template:
     src: templates/terraform_variables.tf.j2
     dest: "{{ terraform_project_path }}/variables.tf"
+  vars:
+    warhorse: "{{ warhorse }}"
 
 - name: Generating Terraform Providers
   template:
     src: templates/terraform_provider.tf.j2
     dest: "{{ terraform_project_path }}/provider.tf"
+  vars:
+    warhorse: "{{ warhorse }}"
 
+# Use regex searches on the JSON representation of 'warhorse'
+# to include provider-specific tasks.
 - ansible.builtin.include_tasks: azure.yml
-  when: warhorse | regex_search("(?i).+('provider':\s'azure')", multiline=True, ignorecase=True)
+  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"azure".*') is not none
+  vars:
+    warhorse: "{{ warhorse }}"
+
 - ansible.builtin.include_tasks: digitalocean.yml
-  when: warhorse | regex_search("(?i).+('provider':\s'digitalocean')", multiline=True, ignorecase=True)
+  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"digitalocean".*') is not none
+  vars:
+    warhorse: "{{ warhorse }}"
+
 - ansible.builtin.include_tasks: linode.yml
-  when: warhorse | regex_search("(?i).+('provider':\s'linode')", multiline=True, ignorecase=True)
+  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"linode".*') is not none
+  vars:
+    warhorse: "{{ warhorse }}"
+
 - ansible.builtin.include_tasks: aws.yml
-  when: warhorse | regex_search("(?i).+('provider':\s'aws')", multiline=True, ignorecase=True)
+  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"aws".*') is not none
+  vars:
+    warhorse: "{{ warhorse }}"
 
 - name: Generating Terraform Outputs
   template:
     src: templates/terraform_outputs.tf.j2
     dest: "{{ terraform_project_path }}/outputs.tf"
+  vars:
+    warhorse: "{{ warhorse }}"
 
 - name: Generating Terraform Inventory Template
   template:
     src: templates/inventory.tmpl.j2
     dest: "{{ terraform_project_path }}/inventory.tmpl"
+  vars:
+    warhorse: "{{ warhorse }}"
 
 - name: Generating Terraform aws Template
   template:
     src: templates/aws.tmpl.j2
     dest: "{{ terraform_project_path }}/aws.tmpl"
+  vars:
+    warhorse: "{{ warhorse }}"
