@@ -27,25 +27,33 @@
 
 - name: Include Azure tasks
   ansible.builtin.include_tasks: azure.yml
-  when: (warhorse | to_nice_json | regex_search('(?i).*"provider"\s*:\s*"azure".*')) | bool
+  when:
+    - warhorse.providers.azure is defined
+    - warhorse.providers.azure | length > 0
   vars:
     warhorse: "{{ warhorse }}"
 
 - name: Include DigitalOcean tasks
   ansible.builtin.include_tasks: digitalocean.yml
-  when: (warhorse | to_nice_json | regex_search('(?i).*"provider"\s*:\s*"digitalocean".*')) | bool
+  when:
+    - warhorse.providers.digitalocean is defined
+    - warhorse.providers.digitalocean | length > 0
   vars:
     warhorse: "{{ warhorse }}"
 
 - name: Include Linode tasks
   ansible.builtin.include_tasks: linode.yml
-  when: (warhorse | to_nice_json | regex_search('(?i).*"provider"\s*:\s*"linode".*')) | bool
+  when:
+    - warhorse.providers.linode is defined
+    - warhorse.providers.linode | length > 0
   vars:
     warhorse: "{{ warhorse }}"
 
 - name: Include AWS tasks
   ansible.builtin.include_tasks: aws.yml
-  when: (warhorse | to_nice_json | regex_search('(?i).*"provider"\s*:\s*"aws".*')) | bool
+  when:
+    - warhorse.providers.aws is defined
+    - warhorse.providers.aws | length > 0
   vars:
     warhorse: "{{ warhorse }}"
 
