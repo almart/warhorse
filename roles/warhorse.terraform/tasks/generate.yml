@@ -25,25 +25,24 @@
   vars:
     warhorse: "{{ warhorse }}"
 
-# Use regex searches on the JSON representation of 'warhorse'
-# to include provider-specific tasks.
+# Include provider‑specific tasks only if that provider is present in warhorse
 - ansible.builtin.include_tasks: azure.yml
-  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"azure".*') is not none
+  when: (warhorse | to_nice_json | regex_search('(?i)"provider"\s*:\s*"azure"')) | bool
   vars:
     warhorse: "{{ warhorse }}"
 
 - ansible.builtin.include_tasks: digitalocean.yml
-  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"digitalocean".*') is not none
+  when: (warhorse | to_nice_json | regex_search('(?i)"provider"\s*:\s*"digitalocean"')) | bool
   vars:
     warhorse: "{{ warhorse }}"
 
 - ansible.builtin.include_tasks: linode.yml
-  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"linode".*') is not none
+  when: (warhorse | to_nice_json | regex_search('(?i)"provider"\s*:\s*"linode"')) | bool
   vars:
     warhorse: "{{ warhorse }}"
 
 - ansible.builtin.include_tasks: aws.yml
-  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"aws".*') is not none
+  when: (warhorse | to_nice_json | regex_search('(?i)"provider"\s*:\s*"aws"')) | bool
   vars:
     warhorse: "{{ warhorse }}"
 
