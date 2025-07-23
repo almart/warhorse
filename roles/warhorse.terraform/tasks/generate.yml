@@ -25,13 +25,12 @@
   vars:
     warhorse: "{{ warhorse }}"
 
+# Use regex searches on the JSON representation of 'warhorse'
+# to include provider-specific tasks.
 - ansible.builtin.include_tasks: azure.yml
-  when:
-    - warhorse.providers.azure is defined
-    - warhorse.providers.azure | length > 0
+  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"azure".*')
   vars:
     warhorse: "{{ warhorse }}"
-
 
 - ansible.builtin.include_tasks: digitalocean.yml
   when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"digitalocean".*')
