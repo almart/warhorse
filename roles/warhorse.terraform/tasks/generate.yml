@@ -31,21 +31,18 @@
   vars:
     warhorse: "{{ warhorse }}"
 
-# Include DigitalOcean tasks if "provider": "digitalocean" appears
 - ansible.builtin.include_tasks: digitalocean.yml
-  when: (warhorse | to_nice_json | regex_search('(?i).*"provider"\s*:\s*"digitalocean".*')) | bool
+  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"digitalocean".*')
   vars:
     warhorse: "{{ warhorse }}"
 
-# Include Linode tasks if "provider": "linode" appears
 - ansible.builtin.include_tasks: linode.yml
-  when: (warhorse | to_nice_json | regex_search('(?i).*"provider"\s*:\s*"linode".*')) | bool
+  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"linode".*')
   vars:
     warhorse: "{{ warhorse }}"
 
-# Include AWS tasks if "provider": "aws" appears
 - ansible.builtin.include_tasks: aws.yml
-  when: (warhorse | to_nice_json | regex_search('(?i).*"provider"\s*:\s*"aws".*')) | bool
+  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"aws".*')
   vars:
     warhorse: "{{ warhorse }}"
 
