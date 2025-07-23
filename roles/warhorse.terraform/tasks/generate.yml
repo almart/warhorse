@@ -8,47 +8,64 @@
     - { folder: "{{ terraform_project_path }}" }
 
 - name: Ensure warhorse variable has required keys
-  set_fact:
+  ansible.builtin.set_fact:
     warhorse: "{{ warhorse | default({}) | combine({'providers': {}, 'terraform': {}}) }}"
 
 - name: Generating Terraform Variables
-  template:
+  ansible.builtin.template:
     src: templates/terraform_variables.tf.j2
     dest: "{{ terraform_project_path }}/variables.tf"
   vars:
     warhorse: "{{ warhorse }}"
 
 - name: Generating Terraform Providers
-  template:
+  ansible.builtin.template:
     src: templates/terraform_provider.tf.j2
     dest: "{{ terraform_project_path }}/provider.tf"
   vars:
     warhorse: "{{ warhorse }}"
 
-# Include Azure tasks if "provider": "azure" appears in warhorse
-- ansible.builtin.include_tasks: azure.yml
+- name: Include Azure tasks
+  ansible.builtin.include_tasks: azure.yml
   when: (warhorse | to_nice_json | regex_search('(?i).*"provider"\s*:\s*"azure".*')) | bool
   vars:
     warhorse: "{{ warhorse }}"
 
-- include: digitalocean.yml
-  when: warhorse | regex_search("(?i).+('provider':\s'digitalocean')", multiline=True, ignorecase=True)
-- include: linode.yml
-  when: warhorse | regex_search("(?i).+('provider':\s'linode')", multiline=True, ignorecase=True)
-- include: aws.yml
-  when: warhorse | regex_search("(?i).+('provider':\s'aws')", multiline=True, ignorecase=True)
+- name: Include DigitalOcean tasks
+  ansible.builtin.include_tasks: digitalocean.yml
+  when: (warhorse | to_nice_json | regex_search('(?i).*"provider"\s*:\s*"digitalocean".*')) | bool
+  vars:
+    warhorse: "{{ warhorse }}"
+
+- name: Include Linode tasks
+  ansible.builtin.include_tasks: linode.yml
+  when: (warhorse | to_nice_json | regex_search('(?i).*"provider"\s*:\s*"linode".*')) | bool
+  vars:
+    warhorse: "{{ warhorse }}"
+
+- name: Include AWS tasks
+  ansible.builtin.include_tasks: aws.yml
+  when: (warhorse | to_nice_json | regex_search('(?i).*"provider"\s*:\s*"aws".*')) | bool
+  vars:
+    warhorse: "{{ warhorse }}"
 
 - name: Generating Terraform Outputs
-  template:
+  ansible.builtin.template:
     src: templates/terraform_outputs.tf.j2
     dest: "{{ terraform_project_path }}/outputs.tf"
+  vars:
+    warhorse: "{{ warhorse }}"
 
 - name: Generating Terraform Inventory Template
-  template:
+  ansible.builtin.template:
     src: templates/inventory.tmpl.j2
     dest: "{{ terraform_project_path }}/inventory.tmpl"
+  vars:
+    warhorse: "{{ warhorse }}"
 
 - name: Generating Terraform aws Template
-  template:
+  ansible.builtin.template:
     src: templates/aws.tmpl.j2
     dest: "{{ terraform_project_path }}/aws.tmpl"
+  vars:
+    warhorse: "{{ warhorse }}"
