@@ -33,17 +33,17 @@
     warhorse: "{{ warhorse }}"
 
 - ansible.builtin.include_tasks: digitalocean.yml
-  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"digitalocean".*')
+  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"digitalocean".*') is not none
   vars:
     warhorse: "{{ warhorse }}"
 
 - ansible.builtin.include_tasks: linode.yml
-  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"linode".*')
+  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"linode".*') is not none
   vars:
     warhorse: "{{ warhorse }}"
 
 - ansible.builtin.include_tasks: aws.yml
-  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"aws".*')
+  when: (warhorse | to_nice_json) | regex_search('(?i).*"provider"\\s*:\\s*"aws".*') is not none
   vars:
     warhorse: "{{ warhorse }}"
 
