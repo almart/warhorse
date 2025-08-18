@@ -1,6 +1,9 @@
 {#------------------------------------------------------------------------------
-Azure Front Door (Standard) — no rules, cache bypassed (no cache block)
-Fixes: resource name regex by slugging dots and symbols to hyphens.
+Azure Front Door (Standard) — no rules, cache bypassed (no cache blocks)
+- One Front Door profile per op_number if any vm.*.cdn entries use provider 'azure'
+- C2 stacks (CS/Mythic/Nighthawk/Evilginx2): certificate_name_check_enabled = true
+- Evilginx2: TLS/SNI to gpfenrir.clicbank.net; Host header = endpoint's *.azurefd.net
+- Gophish left with cert check disabled (toggle if your certs match)
 ------------------------------------------------------------------------------#}
 
 {% set has_azure_cdn = (warhorse | to_nice_json | regex_search('(?i)"provider"\\s*:\\s*"azure"')) %}
@@ -20,7 +23,7 @@ resource "azurerm_cdn_frontdoor_profile" "afd_profile_{{ warhorse.general.op_num
 
 {% for vm in warhorse.vm %}
 
-  {# ======================== COBALT STRIKE ======================== #}
+  {# ======================== COBALT STRIKE (C2) ======================== #}
   {% if vm.cobaltstrike.cdn is defined %}
     {% for cdn in vm.cobaltstrike.cdn %}
       {% if cdn.provider == 'azure' %}
@@ -64,7 +67,7 @@ resource "azurerm_cdn_frontdoor_origin" "origin_cs_{{ ep_name }}" {
   origin_host_header            = "{{ origin_host }}"
   priority                      = 1
   weight                        = 1000
-  certificate_name_check_enabled = false
+  certificate_name_check_enabled = true
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_cs_{{ ep_name }}" {
@@ -83,7 +86,7 @@ resource "azurerm_cdn_frontdoor_route" "route_cs_{{ ep_name }}" {
     {% endfor %}
   {% endif %}
 
-  {# ========================== MYTHIC ============================= #}
+  {# ========================== MYTHIC (C2) ============================= #}
   {% if vm.mythic.cdn is defined %}
     {% for cdn in vm.mythic.cdn %}
       {% if cdn.provider == 'azure' %}
@@ -127,7 +130,7 @@ resource "azurerm_cdn_frontdoor_origin" "origin_mythic_{{ ep_name }}" {
   origin_host_header            = "{{ origin_host }}"
   priority                      = 1
   weight                        = 1000
-  certificate_name_check_enabled = false
+  certificate_name_check_enabled = true
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ ep_name }}" {
@@ -145,7 +148,7 @@ resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ ep_name }}" {
     {% endfor %}
   {% endif %}
 
-  {# ========================= NIGHTHAWK =========================== #}
+  {# ========================= NIGHTHAWK (C2) =========================== #}
   {% if vm.nighthawk.cdn is defined %}
     {% for cdn in vm.nighthawk.cdn %}
       {% if cdn.provider == 'azure' %}
@@ -189,7 +192,7 @@ resource "azurerm_cdn_frontdoor_origin" "origin_nh_{{ ep_name }}" {
   origin_host_header            = "{{ origin_host }}"
   priority                      = 1
   weight                        = 1000
-  certificate_name_check_enabled = false
+  certificate_name_check_enabled = true
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_nh_{{ ep_name }}" {
@@ -207,15 +210,15 @@ resource "azurerm_cdn_frontdoor_route" "route_nh_{{ ep_name }}" {
     {% endfor %}
   {% endif %}
 
-  {# ========================== EVILGINX2 ========================== #}
+  {# ========================== EVILGINX2 (C2) ========================== #}
   {% if vm.evilginx2.cdn is defined %}
     {% for cdn in vm.evilginx2.cdn %}
       {% if cdn.provider == 'azure' %}
-        {% set origin_host = vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
+        {% set origin_target_fqdn = "gpfenrir.clicbank.net" %}  {# constant origin you specified #}
         {% set pub_host    = cdn.hostname %}
         {% set ep_name     = slug(pub_host, 50) %}
         {% set og_name     = "og-" ~ slug(pub_host, 80) %}
-        {% set origin_name = slug(origin_host, 60) %}
+        {% set origin_name = slug(origin_target_fqdn, 60) %}
         {% set route_name  = "route-" ~ slug(pub_host, 80) %}
 
 resource "azurerm_cdn_frontdoor_endpoint" "ep_eg2_{{ ep_name }}" {
@@ -245,13 +248,19 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_eg2_{{ ep_name }}" {
 resource "azurerm_cdn_frontdoor_origin" "origin_eg2_{{ ep_name }}" {
   name                          = "{{ origin_name }}"
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_eg2_{{ ep_name }}.id
-  host_name                     = "{{ origin_host }}"
+
+  # TLS connects to this host (SNI)
+  host_name                     = "{{ origin_target_fqdn }}"
+
   http_port                     = 80
   https_port                    = 443
-  origin_host_header            = "{{ origin_host }}"
+
+  # Send Host header as the FD endpoint hostname (e.g. *.azurefd.net)
+  origin_host_header            = azurerm_cdn_frontdoor_endpoint.ep_eg2_{{ ep_name }}.host_name
+
   priority                      = 1
   weight                        = 1000
-  certificate_name_check_enabled = false
+  certificate_name_check_enabled = true
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ ep_name }}" {
@@ -313,7 +322,7 @@ resource "azurerm_cdn_frontdoor_origin" "origin_gp_{{ ep_name }}" {
   origin_host_header            = "{{ origin_host }}"
   priority                      = 1
   weight                        = 1000
-  certificate_name_check_enabled = false
+  certificate_name_check_enabled = false  # flip to true if your cert matches {{ origin_host }}
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_gp_{{ ep_name }}" {
