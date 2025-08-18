@@ -1,15 +1,14 @@
 {#------------------------------------------------------------------------------
-Azure Front Door (Standard) replacement for deprecated Azure CDN (classic)
-- One Front Door profile per op_number if any vm.*.cdn entries use provider 'azure'
-- For each tool (cobaltstrike, mythic, nighthawk, evilginx2, gophish):
-    * Endpoint (public host)
-    * Origin Group + Origin (with required load_balancing / health_probe)
-    * Route: forwards all paths, HTTPS redirect on
-      → No `cache {}` block ⇒ caching disabled for every request (bypass cache)
-- No rules / rule sets (per your request)
+Azure Front Door (Standard) — no rules, cache bypassed (no cache block)
+Fixes: resource name regex by slugging dots and symbols to hyphens.
 ------------------------------------------------------------------------------#}
 
 {% set has_azure_cdn = (warhorse | to_nice_json | regex_search('(?i)"provider"\\s*:\\s*"azure"')) %}
+
+{# Slug to Azure-friendly name: letters/numbers/hyphens, lowercased, trimmed; truncate to maxlen #}
+{% macro slug(value, maxlen=60) -%}
+{{ (value | regex_replace('[^A-Za-z0-9-]', '-') | trim('-') | lower)[:maxlen] | trim('-') }}
+{%- endmacro %}
 
 {% if has_azure_cdn %}
 resource "azurerm_cdn_frontdoor_profile" "afd_profile_{{ warhorse.general.op_number }}" {
@@ -27,18 +26,21 @@ resource "azurerm_cdn_frontdoor_profile" "afd_profile_{{ warhorse.general.op_num
       {% if cdn.provider == 'azure' %}
         {% set origin_host = "cs-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
         {% set pub_host    = cdn.hostname %}
+        {% set ep_name     = slug(pub_host, 50) %}
+        {% set og_name     = "og-" ~ slug(pub_host, 80) %}
+        {% set origin_name = slug(origin_host, 60) %}
+        {% set route_name  = "route-" ~ slug(pub_host, 80) %}
 
-resource "azurerm_cdn_frontdoor_endpoint" "ep_cs_{{ pub_host }}" {
-  name                     = "{{ pub_host }}"
+resource "azurerm_cdn_frontdoor_endpoint" "ep_cs_{{ ep_name }}" {
+  name                     = "{{ ep_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
 }
 
-resource "azurerm_cdn_frontdoor_origin_group" "og_cs_{{ pub_host }}" {
-  name                     = "og-{{ pub_host }}"
+resource "azurerm_cdn_frontdoor_origin_group" "og_cs_{{ ep_name }}" {
+  name                     = "{{ og_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
   session_affinity_enabled = false
 
-  # Provider-required
   load_balancing {
     sample_size                        = 4
     successful_samples_required        = 3
@@ -53,9 +55,9 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_cs_{{ pub_host }}" {
   }
 }
 
-resource "azurerm_cdn_frontdoor_origin" "origin_cs_{{ pub_host }}" {
-  name                          = "{{ origin_host }}"
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_cs_{{ pub_host }}.id
+resource "azurerm_cdn_frontdoor_origin" "origin_cs_{{ ep_name }}" {
+  name                          = "{{ origin_name }}"
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_cs_{{ ep_name }}.id
   host_name                     = "{{ origin_host }}"
   http_port                     = 80
   https_port                    = 443
@@ -65,16 +67,16 @@ resource "azurerm_cdn_frontdoor_origin" "origin_cs_{{ pub_host }}" {
   certificate_name_check_enabled = false
 }
 
-resource "azurerm_cdn_frontdoor_route" "route_cs_{{ pub_host }}" {
-  name                          = "route-{{ pub_host }}"
-  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_cs_{{ pub_host }}.id
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_cs_{{ pub_host }}.id
-  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_cs_{{ pub_host }}.id]
+resource "azurerm_cdn_frontdoor_route" "route_cs_{{ ep_name }}" {
+  name                          = "{{ route_name }}"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_cs_{{ ep_name }}.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_cs_{{ ep_name }}.id
+  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_cs_{{ ep_name }}.id]
   patterns_to_match             = ["/*"]
   supported_protocols           = ["Http", "Https"]
   forwarding_protocol           = "MatchRequest"
   https_redirect_enabled        = true
-  # No cache block → bypass cache globally
+  # No cache block -> caching disabled
 }
 
       {% endif %}
@@ -87,14 +89,18 @@ resource "azurerm_cdn_frontdoor_route" "route_cs_{{ pub_host }}" {
       {% if cdn.provider == 'azure' %}
         {% set origin_host = "mythic-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
         {% set pub_host    = cdn.hostname %}
+        {% set ep_name     = slug(pub_host, 50) %}
+        {% set og_name     = "og-" ~ slug(pub_host, 80) %}
+        {% set origin_name = slug(origin_host, 60) %}
+        {% set route_name  = "route-" ~ slug(pub_host, 80) %}
 
-resource "azurerm_cdn_frontdoor_endpoint" "ep_mythic_{{ pub_host }}" {
-  name                     = "{{ pub_host }}"
+resource "azurerm_cdn_frontdoor_endpoint" "ep_mythic_{{ ep_name }}" {
+  name                     = "{{ ep_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
 }
 
-resource "azurerm_cdn_frontdoor_origin_group" "og_mythic_{{ pub_host }}" {
-  name                     = "og-{{ pub_host }}"
+resource "azurerm_cdn_frontdoor_origin_group" "og_mythic_{{ ep_name }}" {
+  name                     = "{{ og_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
   session_affinity_enabled = false
 
@@ -112,9 +118,9 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_mythic_{{ pub_host }}" {
   }
 }
 
-resource "azurerm_cdn_frontdoor_origin" "origin_mythic_{{ pub_host }}" {
-  name                          = "{{ origin_host }}"
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_mythic_{{ pub_host }}.id
+resource "azurerm_cdn_frontdoor_origin" "origin_mythic_{{ ep_name }}" {
+  name                          = "{{ origin_name }}"
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_mythic_{{ ep_name }}.id
   host_name                     = "{{ origin_host }}"
   http_port                     = 80
   https_port                    = 443
@@ -124,11 +130,11 @@ resource "azurerm_cdn_frontdoor_origin" "origin_mythic_{{ pub_host }}" {
   certificate_name_check_enabled = false
 }
 
-resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ pub_host }}" {
-  name                          = "route-{{ pub_host }}"
-  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_mythic_{{ pub_host }}.id
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_mythic_{{ pub_host }}.id
-  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_mythic_{{ pub_host }}.id]
+resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ ep_name }}" {
+  name                          = "{{ route_name }}"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_mythic_{{ ep_name }}.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_mythic_{{ ep_name }}.id
+  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_mythic_{{ ep_name }}.id]
   patterns_to_match             = ["/*"]
   supported_protocols           = ["Http", "Https"]
   forwarding_protocol           = "MatchRequest"
@@ -145,14 +151,18 @@ resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ pub_host }}" {
       {% if cdn.provider == 'azure' %}
         {% set origin_host = "nh-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
         {% set pub_host    = cdn.hostname %}
+        {% set ep_name     = slug(pub_host, 50) %}
+        {% set og_name     = "og-" ~ slug(pub_host, 80) %}
+        {% set origin_name = slug(origin_host, 60) %}
+        {% set route_name  = "route-" ~ slug(pub_host, 80) %}
 
-resource "azurerm_cdn_frontdoor_endpoint" "ep_nh_{{ pub_host }}" {
-  name                     = "{{ pub_host }}"
+resource "azurerm_cdn_frontdoor_endpoint" "ep_nh_{{ ep_name }}" {
+  name                     = "{{ ep_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
 }
 
-resource "azurerm_cdn_frontdoor_origin_group" "og_nh_{{ pub_host }}" {
-  name                     = "og-{{ pub_host }}"
+resource "azurerm_cdn_frontdoor_origin_group" "og_nh_{{ ep_name }}" {
+  name                     = "{{ og_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
   session_affinity_enabled = false
 
@@ -170,9 +180,9 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_nh_{{ pub_host }}" {
   }
 }
 
-resource "azurerm_cdn_frontdoor_origin" "origin_nh_{{ pub_host }}" {
-  name                          = "{{ origin_host }}"
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_nh_{{ pub_host }}.id
+resource "azurerm_cdn_frontdoor_origin" "origin_nh_{{ ep_name }}" {
+  name                          = "{{ origin_name }}"
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_nh_{{ ep_name }}.id
   host_name                     = "{{ origin_host }}"
   http_port                     = 80
   https_port                    = 443
@@ -182,11 +192,11 @@ resource "azurerm_cdn_frontdoor_origin" "origin_nh_{{ pub_host }}" {
   certificate_name_check_enabled = false
 }
 
-resource "azurerm_cdn_frontdoor_route" "route_nh_{{ pub_host }}" {
-  name                          = "route-{{ pub_host }}"
-  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_nh_{{ pub_host }}.id
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_nh_{{ pub_host }}.id
-  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_nh_{{ pub_host }}.id]
+resource "azurerm_cdn_frontdoor_route" "route_nh_{{ ep_name }}" {
+  name                          = "{{ route_name }}"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_nh_{{ ep_name }}.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_nh_{{ ep_name }}.id
+  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_nh_{{ ep_name }}.id]
   patterns_to_match             = ["/*"]
   supported_protocols           = ["Http", "Https"]
   forwarding_protocol           = "MatchRequest"
@@ -203,14 +213,18 @@ resource "azurerm_cdn_frontdoor_route" "route_nh_{{ pub_host }}" {
       {% if cdn.provider == 'azure' %}
         {% set origin_host = vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
         {% set pub_host    = cdn.hostname %}
+        {% set ep_name     = slug(pub_host, 50) %}
+        {% set og_name     = "og-" ~ slug(pub_host, 80) %}
+        {% set origin_name = slug(origin_host, 60) %}
+        {% set route_name  = "route-" ~ slug(pub_host, 80) %}
 
-resource "azurerm_cdn_frontdoor_endpoint" "ep_eg2_{{ pub_host }}" {
-  name                     = "{{ pub_host }}"
+resource "azurerm_cdn_frontdoor_endpoint" "ep_eg2_{{ ep_name }}" {
+  name                     = "{{ ep_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
 }
 
-resource "azurerm_cdn_frontdoor_origin_group" "og_eg2_{{ pub_host }}" {
-  name                     = "og-{{ pub_host }}"
+resource "azurerm_cdn_frontdoor_origin_group" "og_eg2_{{ ep_name }}" {
+  name                     = "{{ og_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
   session_affinity_enabled = false
 
@@ -228,9 +242,9 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_eg2_{{ pub_host }}" {
   }
 }
 
-resource "azurerm_cdn_frontdoor_origin" "origin_eg2_{{ pub_host }}" {
-  name                          = "{{ origin_host }}"
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_eg2_{{ pub_host }}.id
+resource "azurerm_cdn_frontdoor_origin" "origin_eg2_{{ ep_name }}" {
+  name                          = "{{ origin_name }}"
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_eg2_{{ ep_name }}.id
   host_name                     = "{{ origin_host }}"
   http_port                     = 80
   https_port                    = 443
@@ -240,11 +254,11 @@ resource "azurerm_cdn_frontdoor_origin" "origin_eg2_{{ pub_host }}" {
   certificate_name_check_enabled = false
 }
 
-resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ pub_host }}" {
-  name                          = "route-{{ pub_host }}"
-  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_eg2_{{ pub_host }}.id
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_eg2_{{ pub_host }}.id
-  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_eg2_{{ pub_host }}.id]
+resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ ep_name }}" {
+  name                          = "{{ route_name }}"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_eg2_{{ ep_name }}.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_eg2_{{ ep_name }}.id
+  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_eg2_{{ ep_name }}.id]
   patterns_to_match             = ["/*"]
   supported_protocols           = ["Http", "Https"]
   forwarding_protocol           = "MatchRequest"
@@ -261,14 +275,18 @@ resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ pub_host }}" {
       {% if cdn.provider == 'azure' %}
         {% set origin_host = vm.gophish.site_hostname ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
         {% set pub_host    = cdn.hostname %}
+        {% set ep_name     = slug(pub_host, 50) %}
+        {% set og_name     = "og-" ~ slug(pub_host, 80) %}
+        {% set origin_name = slug(origin_host, 60) %}
+        {% set route_name  = "route-" ~ slug(pub_host, 80) %}
 
-resource "azurerm_cdn_frontdoor_endpoint" "ep_gp_{{ pub_host }}" {
-  name                     = "{{ pub_host }}"
+resource "azurerm_cdn_frontdoor_endpoint" "ep_gp_{{ ep_name }}" {
+  name                     = "{{ ep_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
 }
 
-resource "azurerm_cdn_frontdoor_origin_group" "og_gp_{{ pub_host }}" {
-  name                     = "og-{{ pub_host }}"
+resource "azurerm_cdn_frontdoor_origin_group" "og_gp_{{ ep_name }}" {
+  name                     = "{{ og_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
   session_affinity_enabled = false
 
@@ -286,9 +304,9 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_gp_{{ pub_host }}" {
   }
 }
 
-resource "azurerm_cdn_frontdoor_origin" "origin_gp_{{ pub_host }}" {
-  name                          = "{{ origin_host }}"
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_gp_{{ pub_host }}.id
+resource "azurerm_cdn_frontdoor_origin" "origin_gp_{{ ep_name }}" {
+  name                          = "{{ origin_name }}"
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_gp_{{ ep_name }}.id
   host_name                     = "{{ origin_host }}"
   http_port                     = 80
   https_port                    = 443
@@ -298,11 +316,11 @@ resource "azurerm_cdn_frontdoor_origin" "origin_gp_{{ pub_host }}" {
   certificate_name_check_enabled = false
 }
 
-resource "azurerm_cdn_frontdoor_route" "route_gp_{{ pub_host }}" {
-  name                          = "route-{{ pub_host }}"
-  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_gp_{{ pub_host }}.id
-  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_gp_{{ pub_host }}.id
-  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_gp_{{ pub_host }}.id]
+resource "azurerm_cdn_frontdoor_route" "route_gp_{{ ep_name }}" {
+  name                          = "{{ route_name }}"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_gp_{{ ep_name }}.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_gp_{{ ep_name }}.id
+  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_gp_{{ ep_name }}.id]
   patterns_to_match             = ["/*"]
   supported_protocols           = ["Http", "Https"]
   forwarding_protocol           = "MatchRequest"
