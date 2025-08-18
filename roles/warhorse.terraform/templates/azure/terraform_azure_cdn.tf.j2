@@ -1,13 +1,12 @@
 {#------------------------------------------------------------------------------
 Azure Front Door (Standard) replacement for deprecated Azure CDN (classic)
-- Creates one Front Door profile per op_number if any vm.*.cdn entries use provider 'azure'
+- One Front Door profile per op_number if any vm.*.cdn entries use provider 'azure'
 - For each tool (cobaltstrike, mythic, nighthawk, evilginx2, gophish):
     * Endpoint (public host)
-    * Origin Group + Origin (your backend host)
-    * Route: forwards all paths, HTTPS redirect on, no caching behavior specified (origin-driven)
-    * Optional Rule Set: if auth header gating enabled, redirect to safe hostname when header missing
-- Ensures redirect hostnames have no scheme
-- Sets origin_host_header to actual origin host (SNI/virtual host correctness)
+    * Origin Group + Origin (with required load_balancing / health_probe)
+    * Route: forwards all paths, HTTPS redirect on
+      → No `cache {}` block ⇒ caching disabled for every request (bypass cache)
+- No rules / rule sets (per your request)
 ------------------------------------------------------------------------------#}
 
 {% set has_azure_cdn = (warhorse | to_nice_json | regex_search('(?i)"provider"\\s*:\\s*"azure"')) %}
@@ -20,11 +19,6 @@ resource "azurerm_cdn_frontdoor_profile" "afd_profile_{{ warhorse.general.op_num
 }
 {% endif %}
 
-{# Helper Jinja macro to strip scheme from a hostname-ish value #}
-{% macro noscheme(value, default) -%}
-{{ (value | default(default) | replace('https://','') | replace('http://','')) }}
-{%- endmacro %}
-
 {% for vm in warhorse.vm %}
 
   {# ======================== COBALT STRIKE ======================== #}
@@ -33,10 +27,6 @@ resource "azurerm_cdn_frontdoor_profile" "afd_profile_{{ warhorse.general.op_num
       {% if cdn.provider == 'azure' %}
         {% set origin_host = "cs-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
         {% set pub_host    = cdn.hostname %}
-        {% set gate_on     = (vm.cobaltstrike.auth_header is defined and vm.cobaltstrike.auth_header) %}
-        {% set gate_name   = (vm.cobaltstrike.auth_header_name | default(auth_header_name)) %}
-        {% set gate_value  = (vm.cobaltstrike.auth_header_value | default(auth_header_value)) %}
-        {% set redir_host  = noscheme(cdn.redirect_domain, 'azure.microsoft.com') %}
 
 resource "azurerm_cdn_frontdoor_endpoint" "ep_cs_{{ pub_host }}" {
   name                     = "{{ pub_host }}"
@@ -48,14 +38,13 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_cs_{{ pub_host }}" {
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
   session_affinity_enabled = false
 
-  # REQUIRED by provider
+  # Provider-required
   load_balancing {
-    sample_size                          = 4
-    successful_samples_required          = 3
-    additional_latency_in_milliseconds   = 0
+    sample_size                        = 4
+    successful_samples_required        = 3
+    additional_latency_in_milliseconds = 0
   }
 
-  # Recommended health probe
   health_probe {
     protocol            = "Https"
     request_type        = "GET"
@@ -73,51 +62,19 @@ resource "azurerm_cdn_frontdoor_origin" "origin_cs_{{ pub_host }}" {
   origin_host_header            = "{{ origin_host }}"
   priority                      = 1
   weight                        = 1000
+  certificate_name_check_enabled = false
 }
-
-{% if gate_on %}
-resource "azurerm_cdn_frontdoor_rule_set" "rs_cs_{{ pub_host }}" {
-  name                     = "rs-{{ pub_host }}"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
-}
-
-# Redirect when REQUIRED header is MISSING (negate_condition = true)
-resource "azurerm_cdn_frontdoor_rule" "rule_cs_{{ pub_host }}" {
-  name        = "redirect-if-missing-header"
-  rule_set_id = azurerm_cdn_frontdoor_rule_set.rs_cs_{{ pub_host }}.id
-  order       = 1
-
-  conditions {
-    request_header_condition {
-      selector         = "{{ gate_name }}"
-      operator         = "Equal"
-      match_values     = ["{{ gate_value }}"]
-      negate_condition = true
-      transforms       = []
-    }
-  }
-
-  actions {
-    url_redirect_action {
-      redirect_type        = "Moved"
-      destination_hostname = "{{ redir_host }}"
-    }
-  }
-}
-{% endif %}
 
 resource "azurerm_cdn_frontdoor_route" "route_cs_{{ pub_host }}" {
-  name                              = "route-{{ pub_host }}"
-  cdn_frontdoor_endpoint_id         = azurerm_cdn_frontdoor_endpoint.ep_cs_{{ pub_host }}.id
-  cdn_frontdoor_origin_group_id     = azurerm_cdn_frontdoor_origin_group.og_cs_{{ pub_host }}.id
-  cdn_frontdoor_origin_ids          = [azurerm_cdn_frontdoor_origin.origin_cs_{{ pub_host }}.id]
-  patterns_to_match                 = ["/*"]
-  supported_protocols               = ["Http", "Https"]
-  forwarding_protocol               = "MatchRequest"
-  https_redirect_enabled            = true
-  {%- if gate_on %}
-  rule_sets                         = [azurerm_cdn_frontdoor_rule_set.rs_cs_{{ pub_host }}.id]
-  {%- endif %}
+  name                          = "route-{{ pub_host }}"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_cs_{{ pub_host }}.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_cs_{{ pub_host }}.id
+  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_cs_{{ pub_host }}.id]
+  patterns_to_match             = ["/*"]
+  supported_protocols           = ["Http", "Https"]
+  forwarding_protocol           = "MatchRequest"
+  https_redirect_enabled        = true
+  # No cache block → bypass cache globally
 }
 
       {% endif %}
@@ -130,10 +87,6 @@ resource "azurerm_cdn_frontdoor_route" "route_cs_{{ pub_host }}" {
       {% if cdn.provider == 'azure' %}
         {% set origin_host = "mythic-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
         {% set pub_host    = cdn.hostname %}
-        {% set gate_on     = (vm.mythic.auth_header is defined and vm.mythic.auth_header) %}
-        {% set gate_name   = (vm.mythic.auth_header_name | default(auth_header_name)) %}
-        {% set gate_value  = (vm.mythic.auth_header_value | default(auth_header_value)) %}
-        {% set redir_host  = noscheme((cdn.redirect_domain | default(cdn.redirect_url)), 'azure.microsoft.com') %}
 
 resource "azurerm_cdn_frontdoor_endpoint" "ep_mythic_{{ pub_host }}" {
   name                     = "{{ pub_host }}"
@@ -168,50 +121,18 @@ resource "azurerm_cdn_frontdoor_origin" "origin_mythic_{{ pub_host }}" {
   origin_host_header            = "{{ origin_host }}"
   priority                      = 1
   weight                        = 1000
+  certificate_name_check_enabled = false
 }
-
-{% if gate_on %}
-resource "azurerm_cdn_frontdoor_rule_set" "rs_mythic_{{ pub_host }}" {
-  name                     = "rs-{{ pub_host }}"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
-}
-
-resource "azurerm_cdn_frontdoor_rule" "rule_mythic_{{ pub_host }}" {
-  name        = "redirect-if-missing-header"
-  rule_set_id = azurerm_cdn_frontdoor_rule_set.rs_mythic_{{ pub_host }}.id
-  order       = 1
-
-  conditions {
-    request_header_condition {
-      selector         = "{{ gate_name }}"
-      operator         = "Equal"
-      match_values     = ["{{ gate_value }}"]
-      negate_condition = true
-      transforms       = []
-    }
-  }
-
-  actions {
-    url_redirect_action {
-      redirect_type        = "Moved"
-      destination_hostname = "{{ redir_host }}"
-    }
-  }
-}
-{% endif %}
 
 resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ pub_host }}" {
-  name                              = "route-{{ pub_host }}"
-  cdn_frontdoor_endpoint_id         = azurerm_cdn_frontdoor_endpoint.ep_mythic_{{ pub_host }}.id
-  cdn_frontdoor_origin_group_id     = azurerm_cdn_frontdoor_origin_group.og_mythic_{{ pub_host }}.id
-  cdn_frontdoor_origin_ids          = [azurerm_cdn_frontdoor_origin.origin_mythic_{{ pub_host }}.id]
-  patterns_to_match                 = ["/*"]
-  supported_protocols               = ["Http", "Https"]
-  forwarding_protocol               = "MatchRequest"
-  https_redirect_enabled            = true
-  {%- if gate_on %}
-  rule_sets                         = [azurerm_cdn_frontdoor_rule_set.rs_mythic_{{ pub_host }}.id]
-  {%- endif %}
+  name                          = "route-{{ pub_host }}"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_mythic_{{ pub_host }}.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_mythic_{{ pub_host }}.id
+  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_mythic_{{ pub_host }}.id]
+  patterns_to_match             = ["/*"]
+  supported_protocols           = ["Http", "Https"]
+  forwarding_protocol           = "MatchRequest"
+  https_redirect_enabled        = true
 }
 
       {% endif %}
@@ -224,10 +145,6 @@ resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ pub_host }}" {
       {% if cdn.provider == 'azure' %}
         {% set origin_host = "nh-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
         {% set pub_host    = cdn.hostname %}
-        {% set gate_on     = (vm.nighthawk.auth_header is defined and vm.nighthawk.auth_header) %}
-        {% set gate_name   = (vm.nighthawk.auth_header_name | default(auth_header_name)) %}
-        {% set gate_value  = (vm.nighthawk.auth_header_value | default(auth_header_value)) %}
-        {% set redir_host  = noscheme(cdn.redirect_domain, 'azure.microsoft.com') %}
 
 resource "azurerm_cdn_frontdoor_endpoint" "ep_nh_{{ pub_host }}" {
   name                     = "{{ pub_host }}"
@@ -262,50 +179,18 @@ resource "azurerm_cdn_frontdoor_origin" "origin_nh_{{ pub_host }}" {
   origin_host_header            = "{{ origin_host }}"
   priority                      = 1
   weight                        = 1000
+  certificate_name_check_enabled = false
 }
-
-{% if gate_on %}
-resource "azurerm_cdn_frontdoor_rule_set" "rs_nh_{{ pub_host }}" {
-  name                     = "rs-{{ pub_host }}"
-  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
-}
-
-resource "azurerm_cdn_frontdoor_rule" "rule_nh_{{ pub_host }}" {
-  name        = "redirect-if-missing-header"
-  rule_set_id = azurerm_cdn_frontdoor_rule_set.rs_nh_{{ pub_host }}.id
-  order       = 1
-
-  conditions {
-    request_header_condition {
-      selector         = "{{ gate_name }}"
-      operator         = "Equal"
-      match_values     = ["{{ gate_value }}"]
-      negate_condition = true
-      transforms       = []
-    }
-  }
-
-  actions {
-    url_redirect_action {
-      redirect_type        = "Moved"
-      destination_hostname = "{{ redir_host }}"
-    }
-  }
-}
-{% endif %}
 
 resource "azurerm_cdn_frontdoor_route" "route_nh_{{ pub_host }}" {
-  name                              = "route-{{ pub_host }}"
-  cdn_frontdoor_endpoint_id         = azurerm_cdn_frontdoor_endpoint.ep_nh_{{ pub_host }}.id
-  cdn_frontdoor_origin_group_id     = azurerm_cdn_frontdoor_origin_group.og_nh_{{ pub_host }}.id
-  cdn_frontdoor_origin_ids          = [azurerm_cdn_frontdoor_origin.origin_nh_{{ pub_host }}.id]
-  patterns_to_match                 = ["/*"]
-  supported_protocols               = ["Http", "Https"]
-  forwarding_protocol               = "MatchRequest"
-  https_redirect_enabled            = true
-  {%- if gate_on %}
-  rule_sets                         = [azurerm_cdn_frontdoor_rule_set.rs_nh_{{ pub_host }}.id]
-  {%- endif %}
+  name                          = "route-{{ pub_host }}"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_nh_{{ pub_host }}.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_nh_{{ pub_host }}.id
+  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_nh_{{ pub_host }}.id]
+  patterns_to_match             = ["/*"]
+  supported_protocols           = ["Http", "Https"]
+  forwarding_protocol           = "MatchRequest"
+  https_redirect_enabled        = true
 }
 
       {% endif %}
@@ -352,17 +237,18 @@ resource "azurerm_cdn_frontdoor_origin" "origin_eg2_{{ pub_host }}" {
   origin_host_header            = "{{ origin_host }}"
   priority                      = 1
   weight                        = 1000
+  certificate_name_check_enabled = false
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ pub_host }}" {
-  name                              = "route-{{ pub_host }}"
-  cdn_frontdoor_endpoint_id         = azurerm_cdn_frontdoor_endpoint.ep_eg2_{{ pub_host }}.id
-  cdn_frontdoor_origin_group_id     = azurerm_cdn_frontdoor_origin_group.og_eg2_{{ pub_host }}.id
-  cdn_frontdoor_origin_ids          = [azurerm_cdn_frontdoor_origin.origin_eg2_{{ pub_host }}.id]
-  patterns_to_match                 = ["/*"]
-  supported_protocols               = ["Http", "Https"]
-  forwarding_protocol               = "MatchRequest"
-  https_redirect_enabled            = true
+  name                          = "route-{{ pub_host }}"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_eg2_{{ pub_host }}.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_eg2_{{ pub_host }}.id
+  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_eg2_{{ pub_host }}.id]
+  patterns_to_match             = ["/*"]
+  supported_protocols           = ["Http", "Https"]
+  forwarding_protocol           = "MatchRequest"
+  https_redirect_enabled        = true
 }
 
       {% endif %}
@@ -373,8 +259,7 @@ resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ pub_host }}" {
   {% if vm.gophish.cdn is defined %}
     {% for cdn in vm.gophish.cdn %}
       {% if cdn.provider == 'azure' %}
-        {% set site_host  = vm.gophish.site_hostname ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
-        {% set origin_host = site_host %}
+        {% set origin_host = vm.gophish.site_hostname ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
         {% set pub_host    = cdn.hostname %}
 
 resource "azurerm_cdn_frontdoor_endpoint" "ep_gp_{{ pub_host }}" {
@@ -410,17 +295,18 @@ resource "azurerm_cdn_frontdoor_origin" "origin_gp_{{ pub_host }}" {
   origin_host_header            = "{{ origin_host }}"
   priority                      = 1
   weight                        = 1000
+  certificate_name_check_enabled = false
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_gp_{{ pub_host }}" {
-  name                              = "route-{{ pub_host }}"
-  cdn_frontdoor_endpoint_id         = azurerm_cdn_frontdoor_endpoint.ep_gp_{{ pub_host }}.id
-  cdn_frontdoor_origin_group_id     = azurerm_cdn_frontdoor_origin_group.og_gp_{{ pub_host }}.id
-  cdn_frontdoor_origin_ids          = [azurerm_cdn_frontdoor_origin.origin_gp_{{ pub_host }}.id]
-  patterns_to_match                 = ["/*"]
-  supported_protocols               = ["Http", "Https"]
-  forwarding_protocol               = "MatchRequest"
-  https_redirect_enabled            = true
+  name                          = "route-{{ pub_host }}"
+  cdn_frontdoor_endpoint_id     = azurerm_cdn_frontdoor_endpoint.ep_gp_{{ pub_host }}.id
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_gp_{{ pub_host }}.id
+  cdn_frontdoor_origin_ids      = [azurerm_cdn_frontdoor_origin.origin_gp_{{ pub_host }}.id]
+  patterns_to_match             = ["/*"]
+  supported_protocols           = ["Http", "Https"]
+  forwarding_protocol           = "MatchRequest"
+  https_redirect_enabled        = true
 }
 
       {% endif %}
