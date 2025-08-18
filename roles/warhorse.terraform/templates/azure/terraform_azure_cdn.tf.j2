@@ -1,14 +1,16 @@
 {#------------------------------------------------------------------------------
-Azure Front Door (Standard) — no rules, cache bypassed (no cache blocks)
-- One Front Door profile per op_number if any vm.*.cdn entries use provider 'azure'
-- C2 stacks (CS/Mythic/Nighthawk/Evilginx2): certificate_name_check_enabled = true
-- Evilginx2: TLS/SNI to gpfenrir.clicbank.net; Host header = endpoint's *.azurefd.net
-- Gophish left with cert check disabled (toggle if your certs match)
+Azure Front Door (Standard) — generalized, no rules, cache bypassed by omission
+- Origin host per stack matches your classic CDN template
+- Host header to origin = endpoint’s *.azurefd.net FQDN (Nginx-friendly)
+- Optional global override: warhorse.afd.global_origin_fqdn
 ------------------------------------------------------------------------------#}
 
 {% set has_azure_cdn = (warhorse | to_nice_json | regex_search('(?i)"provider"\\s*:\\s*"azure"')) %}
+{% set op_domain = (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
+{% set global_origin = (warhorse.afd.global_origin_fqdn if (warhorse.afd is defined and warhorse.afd.global_origin_fqdn is defined) else None) %}
+{% set strict_cert = true %}  {# flip to false if your origin certs don't match SNI #}
 
-{# Slug to Azure-friendly name: letters/numbers/hyphens, lowercased, trimmed; truncate to maxlen #}
+{# Azure-safe slug for resource names #}
 {% macro slug(value, maxlen=60) -%}
 {{ (value | regex_replace('[^A-Za-z0-9-]', '-') | trim('-') | lower)[:maxlen] | trim('-') }}
 {%- endmacro %}
@@ -23,16 +25,15 @@ resource "azurerm_cdn_frontdoor_profile" "afd_profile_{{ warhorse.general.op_num
 
 {% for vm in warhorse.vm %}
 
-  {# ======================== COBALT STRIKE (C2) ======================== #}
+  {# ======================== COBALT STRIKE ======================== #}
   {% if vm.cobaltstrike.cdn is defined %}
-    {% for cdn in vm.cobaltstrike.cdn %}
-      {% if cdn.provider == 'azure' %}
-        {% set origin_host = "cs-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
-        {% set pub_host    = cdn.hostname %}
-        {% set ep_name     = slug(pub_host, 50) %}
-        {% set og_name     = "og-" ~ slug(pub_host, 80) %}
-        {% set origin_name = slug(origin_host, 60) %}
-        {% set route_name  = "route-" ~ slug(pub_host, 80) %}
+    {% for cdn in vm.cobaltstrike.cdn if cdn.provider == 'azure' %}
+      {% set pub_host    = cdn.hostname %}
+      {% set origin_host = (global_origin if global_origin else ("cs-" ~ vm.name ~ "." ~ op_domain)) %}
+      {% set ep_name     = slug(pub_host, 50) %}
+      {% set og_name     = "og-" ~ slug(pub_host, 80) %}
+      {% set origin_name = "org-" ~ ep_name ~ "-" ~ slug(origin_host, 30) %}
+      {% set route_name  = "route-" ~ slug(pub_host, 80) %}
 
 resource "azurerm_cdn_frontdoor_endpoint" "ep_cs_{{ ep_name }}" {
   name                     = "{{ ep_name }}"
@@ -61,13 +62,18 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_cs_{{ ep_name }}" {
 resource "azurerm_cdn_frontdoor_origin" "origin_cs_{{ ep_name }}" {
   name                          = "{{ origin_name }}"
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_cs_{{ ep_name }}.id
+
+  # TLS/SNI target (your real origin)
   host_name                     = "{{ origin_host }}"
   http_port                     = 80
   https_port                    = 443
-  origin_host_header            = "{{ origin_host }}"
+
+  # Host header sent to origin = endpoint FQDN (*.azurefd.net)
+  origin_host_header            = azurerm_cdn_frontdoor_endpoint.ep_cs_{{ ep_name }}.host_name
+
   priority                      = 1
   weight                        = 1000
-  certificate_name_check_enabled = true
+  certificate_name_check_enabled = {{ "true" if strict_cert else "false" }}
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_cs_{{ ep_name }}" {
@@ -79,23 +85,20 @@ resource "azurerm_cdn_frontdoor_route" "route_cs_{{ ep_name }}" {
   supported_protocols           = ["Http", "Https"]
   forwarding_protocol           = "MatchRequest"
   https_redirect_enabled        = true
-  # No cache block -> caching disabled
 }
 
-      {% endif %}
     {% endfor %}
   {% endif %}
 
-  {# ========================== MYTHIC (C2) ============================= #}
+  {# ========================== MYTHIC ============================= #}
   {% if vm.mythic.cdn is defined %}
-    {% for cdn in vm.mythic.cdn %}
-      {% if cdn.provider == 'azure' %}
-        {% set origin_host = "mythic-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
-        {% set pub_host    = cdn.hostname %}
-        {% set ep_name     = slug(pub_host, 50) %}
-        {% set og_name     = "og-" ~ slug(pub_host, 80) %}
-        {% set origin_name = slug(origin_host, 60) %}
-        {% set route_name  = "route-" ~ slug(pub_host, 80) %}
+    {% for cdn in vm.mythic.cdn if cdn.provider == 'azure' %}
+      {% set pub_host    = cdn.hostname %}
+      {% set origin_host = (global_origin if global_origin else ("mythic-" ~ vm.name ~ "." ~ op_domain)) %}
+      {% set ep_name     = slug(pub_host, 50) %}
+      {% set og_name     = "og-" ~ slug(pub_host, 80) %}
+      {% set origin_name = "org-" ~ ep_name ~ "-" ~ slug(origin_host, 30) %}
+      {% set route_name  = "route-" ~ slug(pub_host, 80) %}
 
 resource "azurerm_cdn_frontdoor_endpoint" "ep_mythic_{{ ep_name }}" {
   name                     = "{{ ep_name }}"
@@ -127,10 +130,10 @@ resource "azurerm_cdn_frontdoor_origin" "origin_mythic_{{ ep_name }}" {
   host_name                     = "{{ origin_host }}"
   http_port                     = 80
   https_port                    = 443
-  origin_host_header            = "{{ origin_host }}"
+  origin_host_header            = azurerm_cdn_frontdoor_endpoint.ep_mythic_{{ ep_name }}.host_name
   priority                      = 1
   weight                        = 1000
-  certificate_name_check_enabled = true
+  certificate_name_check_enabled = {{ "true" if strict_cert else "false" }}
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ ep_name }}" {
@@ -144,20 +147,18 @@ resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ ep_name }}" {
   https_redirect_enabled        = true
 }
 
-      {% endif %}
     {% endfor %}
   {% endif %}
 
-  {# ========================= NIGHTHAWK (C2) =========================== #}
+  {# ========================= NIGHTHAWK =========================== #}
   {% if vm.nighthawk.cdn is defined %}
-    {% for cdn in vm.nighthawk.cdn %}
-      {% if cdn.provider == 'azure' %}
-        {% set origin_host = "nh-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
-        {% set pub_host    = cdn.hostname %}
-        {% set ep_name     = slug(pub_host, 50) %}
-        {% set og_name     = "og-" ~ slug(pub_host, 80) %}
-        {% set origin_name = slug(origin_host, 60) %}
-        {% set route_name  = "route-" ~ slug(pub_host, 80) %}
+    {% for cdn in vm.nighthawk.cdn if cdn.provider == 'azure' %}
+      {% set pub_host    = cdn.hostname %}
+      {% set origin_host = (global_origin if global_origin else ("nh-" ~ vm.name ~ "." ~ op_domain)) %}
+      {% set ep_name     = slug(pub_host, 50) %}
+      {% set og_name     = "og-" ~ slug(pub_host, 80) %}
+      {% set origin_name = "org-" ~ ep_name ~ "-" ~ slug(origin_host, 30) %}
+      {% set route_name  = "route-" ~ slug(pub_host, 80) %}
 
 resource "azurerm_cdn_frontdoor_endpoint" "ep_nh_{{ ep_name }}" {
   name                     = "{{ ep_name }}"
@@ -189,10 +190,10 @@ resource "azurerm_cdn_frontdoor_origin" "origin_nh_{{ ep_name }}" {
   host_name                     = "{{ origin_host }}"
   http_port                     = 80
   https_port                    = 443
-  origin_host_header            = "{{ origin_host }}"
+  origin_host_header            = azurerm_cdn_frontdoor_endpoint.ep_nh_{{ ep_name }}.host_name
   priority                      = 1
   weight                        = 1000
-  certificate_name_check_enabled = true
+  certificate_name_check_enabled = {{ "true" if strict_cert else "false" }}
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_nh_{{ ep_name }}" {
@@ -206,20 +207,18 @@ resource "azurerm_cdn_frontdoor_route" "route_nh_{{ ep_name }}" {
   https_redirect_enabled        = true
 }
 
-      {% endif %}
     {% endfor %}
   {% endif %}
 
-  {# ========================== EVILGINX2 (C2) ========================== #}
+  {# ========================== EVILGINX2 ========================== #}
   {% if vm.evilginx2.cdn is defined %}
-    {% for cdn in vm.evilginx2.cdn %}
-      {% if cdn.provider == 'azure' %}
-        {% set origin_target_fqdn = "gpfenrir.clicbank.net" %}  {# constant origin you specified #}
-        {% set pub_host    = cdn.hostname %}
-        {% set ep_name     = slug(pub_host, 50) %}
-        {% set og_name     = "og-" ~ slug(pub_host, 80) %}
-        {% set origin_name = slug(origin_target_fqdn, 60) %}
-        {% set route_name  = "route-" ~ slug(pub_host, 80) %}
+    {% for cdn in vm.evilginx2.cdn if cdn.provider == 'azure' %}
+      {% set pub_host    = cdn.hostname %}
+      {% set origin_host = (global_origin if global_origin else (vm.name ~ "." ~ op_domain)) %}
+      {% set ep_name     = slug(pub_host, 50) %}
+      {% set og_name     = "og-" ~ slug(pub_host, 80) %}
+      {% set origin_name = "org-" ~ ep_name ~ "-" ~ slug(origin_host, 30) %}
+      {% set route_name  = "route-" ~ slug(pub_host, 80) %}
 
 resource "azurerm_cdn_frontdoor_endpoint" "ep_eg2_{{ ep_name }}" {
   name                     = "{{ ep_name }}"
@@ -249,18 +248,16 @@ resource "azurerm_cdn_frontdoor_origin" "origin_eg2_{{ ep_name }}" {
   name                          = "{{ origin_name }}"
   cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_eg2_{{ ep_name }}.id
 
-  # TLS connects to this host (SNI)
-  host_name                     = "{{ origin_target_fqdn }}"
-
+  host_name                     = "{{ origin_host }}"
   http_port                     = 80
   https_port                    = 443
 
-  # Send Host header as the FD endpoint hostname (e.g. *.azurefd.net)
+  # Match classic behavior: Host header = CDN endpoint FQDN
   origin_host_header            = azurerm_cdn_frontdoor_endpoint.ep_eg2_{{ ep_name }}.host_name
 
   priority                      = 1
   weight                        = 1000
-  certificate_name_check_enabled = true
+  certificate_name_check_enabled = {{ "true" if strict_cert else "false" }}
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ ep_name }}" {
@@ -274,20 +271,18 @@ resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ ep_name }}" {
   https_redirect_enabled        = true
 }
 
-      {% endif %}
     {% endfor %}
   {% endif %}
 
   {# ============================ GOPHISH ========================== #}
   {% if vm.gophish.cdn is defined %}
-    {% for cdn in vm.gophish.cdn %}
-      {% if cdn.provider == 'azure' %}
-        {% set origin_host = vm.gophish.site_hostname ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
-        {% set pub_host    = cdn.hostname %}
-        {% set ep_name     = slug(pub_host, 50) %}
-        {% set og_name     = "og-" ~ slug(pub_host, 80) %}
-        {% set origin_name = slug(origin_host, 60) %}
-        {% set route_name  = "route-" ~ slug(pub_host, 80) %}
+    {% for cdn in vm.gophish.cdn if cdn.provider == 'azure' %}
+      {% set pub_host    = cdn.hostname %}
+      {% set origin_host = (global_origin if global_origin else (vm.gophish.site_hostname ~ "." ~ op_domain)) %}
+      {% set ep_name     = slug(pub_host, 50) %}
+      {% set og_name     = "og-" ~ slug(pub_host, 80) %}
+      {% set origin_name = "org-" ~ ep_name ~ "-" ~ slug(origin_host, 30) %}
+      {% set route_name  = "route-" ~ slug(pub_host, 80) %}
 
 resource "azurerm_cdn_frontdoor_endpoint" "ep_gp_{{ ep_name }}" {
   name                     = "{{ ep_name }}"
@@ -319,10 +314,10 @@ resource "azurerm_cdn_frontdoor_origin" "origin_gp_{{ ep_name }}" {
   host_name                     = "{{ origin_host }}"
   http_port                     = 80
   https_port                    = 443
-  origin_host_header            = "{{ origin_host }}"
+  origin_host_header            = azurerm_cdn_frontdoor_endpoint.ep_gp_{{ ep_name }}.host_name
   priority                      = 1
   weight                        = 1000
-  certificate_name_check_enabled = false  # flip to true if your cert matches {{ origin_host }}
+  certificate_name_check_enabled = {{ "true" if strict_cert else "false" }}
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_gp_{{ ep_name }}" {
@@ -336,7 +331,6 @@ resource "azurerm_cdn_frontdoor_route" "route_gp_{{ ep_name }}" {
   https_redirect_enabled        = true
 }
 
-      {% endif %}
     {% endfor %}
   {% endif %}
 
