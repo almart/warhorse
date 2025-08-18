@@ -1,8 +1,10 @@
 {#------------------------------------------------------------------------------
-Azure Front Door (Standard) — generalized, no rules, cache bypassed by omission
-- Origin host per stack matches your classic CDN template
-- Host header to origin = endpoint’s *.azurefd.net FQDN (Nginx-friendly)
+Azure Front Door (Standard) — robust apply (enabled flags + depends_on + wait)
+- Origin host per stack matches your classic CDN template (CS/Mythic/NH/EG2/Gophish)
+- Host header to origin = endpoint’s *.azurefd.net FQDN (Nginx will key on $host)
 - Optional global override: warhorse.afd.global_origin_fqdn
+- No rules, no cache blocks (bypassed)
+- Adds enabled=true everywhere + time_sleep to avoid AFD eventual consistency
 ------------------------------------------------------------------------------#}
 
 {% set has_azure_cdn = (warhorse | to_nice_json | regex_search('(?i)"provider"\\s*:\\s*"azure"')) %}
@@ -38,6 +40,7 @@ resource "azurerm_cdn_frontdoor_profile" "afd_profile_{{ warhorse.general.op_num
 resource "azurerm_cdn_frontdoor_endpoint" "ep_cs_{{ ep_name }}" {
   name                     = "{{ ep_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+  enabled                  = true
 }
 
 resource "azurerm_cdn_frontdoor_origin_group" "og_cs_{{ ep_name }}" {
@@ -74,6 +77,13 @@ resource "azurerm_cdn_frontdoor_origin" "origin_cs_{{ ep_name }}" {
   priority                      = 1
   weight                        = 1000
   certificate_name_check_enabled = {{ "true" if strict_cert else "false" }}
+  enabled                       = true
+}
+
+# Wait after origin creation to avoid AFD eventual-consistency race
+resource "time_sleep" "wait_cs_{{ ep_name }}" {
+  create_duration = "30s"
+  depends_on = [azurerm_cdn_frontdoor_origin.origin_cs_{{ ep_name }}]
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_cs_{{ ep_name }}" {
@@ -85,6 +95,14 @@ resource "azurerm_cdn_frontdoor_route" "route_cs_{{ ep_name }}" {
   supported_protocols           = ["Http", "Https"]
   forwarding_protocol           = "MatchRequest"
   https_redirect_enabled        = true
+  enabled                       = true
+
+  depends_on = [
+    time_sleep.wait_cs_{{ ep_name }},
+    azurerm_cdn_frontdoor_endpoint.ep_cs_{{ ep_name }},
+    azurerm_cdn_frontdoor_origin_group.og_cs_{{ ep_name }},
+    azurerm_cdn_frontdoor_origin.origin_cs_{{ ep_name }},
+  ]
 }
 
     {% endfor %}
@@ -103,6 +121,7 @@ resource "azurerm_cdn_frontdoor_route" "route_cs_{{ ep_name }}" {
 resource "azurerm_cdn_frontdoor_endpoint" "ep_mythic_{{ ep_name }}" {
   name                     = "{{ ep_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+  enabled                  = true
 }
 
 resource "azurerm_cdn_frontdoor_origin_group" "og_mythic_{{ ep_name }}" {
@@ -134,6 +153,12 @@ resource "azurerm_cdn_frontdoor_origin" "origin_mythic_{{ ep_name }}" {
   priority                      = 1
   weight                        = 1000
   certificate_name_check_enabled = {{ "true" if strict_cert else "false" }}
+  enabled                       = true
+}
+
+resource "time_sleep" "wait_mythic_{{ ep_name }}" {
+  create_duration = "30s"
+  depends_on = [azurerm_cdn_frontdoor_origin.origin_mythic_{{ ep_name }}]
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ ep_name }}" {
@@ -145,6 +170,14 @@ resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ ep_name }}" {
   supported_protocols           = ["Http", "Https"]
   forwarding_protocol           = "MatchRequest"
   https_redirect_enabled        = true
+  enabled                       = true
+
+  depends_on = [
+    time_sleep.wait_mythic_{{ ep_name }},
+    azurerm_cdn_frontdoor_endpoint.ep_mythic_{{ ep_name }},
+    azurerm_cdn_frontdoor_origin_group.og_mythic_{{ ep_name }},
+    azurerm_cdn_frontdoor_origin.origin_mythic_{{ ep_name }},
+  ]
 }
 
     {% endfor %}
@@ -163,6 +196,7 @@ resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ ep_name }}" {
 resource "azurerm_cdn_frontdoor_endpoint" "ep_nh_{{ ep_name }}" {
   name                     = "{{ ep_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+  enabled                  = true
 }
 
 resource "azurerm_cdn_frontdoor_origin_group" "og_nh_{{ ep_name }}" {
@@ -194,6 +228,12 @@ resource "azurerm_cdn_frontdoor_origin" "origin_nh_{{ ep_name }}" {
   priority                      = 1
   weight                        = 1000
   certificate_name_check_enabled = {{ "true" if strict_cert else "false" }}
+  enabled                       = true
+}
+
+resource "time_sleep" "wait_nh_{{ ep_name }}" {
+  create_duration = "30s"
+  depends_on = [azurerm_cdn_frontdoor_origin.origin_nh_{{ ep_name }}]
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_nh_{{ ep_name }}" {
@@ -205,6 +245,14 @@ resource "azurerm_cdn_frontdoor_route" "route_nh_{{ ep_name }}" {
   supported_protocols           = ["Http", "Https"]
   forwarding_protocol           = "MatchRequest"
   https_redirect_enabled        = true
+  enabled                       = true
+
+  depends_on = [
+    time_sleep.wait_nh_{{ ep_name }},
+    azurerm_cdn_frontdoor_endpoint.ep_nh_{{ ep_name }},
+    azurerm_cdn_frontdoor_origin_group.og_nh_{{ ep_name }},
+    azurerm_cdn_frontdoor_origin.origin_nh_{{ ep_name }},
+  ]
 }
 
     {% endfor %}
@@ -223,6 +271,7 @@ resource "azurerm_cdn_frontdoor_route" "route_nh_{{ ep_name }}" {
 resource "azurerm_cdn_frontdoor_endpoint" "ep_eg2_{{ ep_name }}" {
   name                     = "{{ ep_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+  enabled                  = true
 }
 
 resource "azurerm_cdn_frontdoor_origin_group" "og_eg2_{{ ep_name }}" {
@@ -252,12 +301,18 @@ resource "azurerm_cdn_frontdoor_origin" "origin_eg2_{{ ep_name }}" {
   http_port                     = 80
   https_port                    = 443
 
-  # Match classic behavior: Host header = CDN endpoint FQDN
+  # Match classic behavior: Host header = endpoint FQDN
   origin_host_header            = azurerm_cdn_frontdoor_endpoint.ep_eg2_{{ ep_name }}.host_name
 
   priority                      = 1
   weight                        = 1000
   certificate_name_check_enabled = {{ "true" if strict_cert else "false" }}
+  enabled                       = true
+}
+
+resource "time_sleep" "wait_eg2_{{ ep_name }}" {
+  create_duration = "30s"
+  depends_on = [azurerm_cdn_frontdoor_origin.origin_eg2_{{ ep_name }}]
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ ep_name }}" {
@@ -269,6 +324,14 @@ resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ ep_name }}" {
   supported_protocols           = ["Http", "Https"]
   forwarding_protocol           = "MatchRequest"
   https_redirect_enabled        = true
+  enabled                       = true
+
+  depends_on = [
+    time_sleep.wait_eg2_{{ ep_name }},
+    azurerm_cdn_frontdoor_endpoint.ep_eg2_{{ ep_name }},
+    azurerm_cdn_frontdoor_origin_group.og_eg2_{{ ep_name }},
+    azurerm_cdn_frontdoor_origin.origin_eg2_{{ ep_name }},
+  ]
 }
 
     {% endfor %}
@@ -287,6 +350,7 @@ resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ ep_name }}" {
 resource "azurerm_cdn_frontdoor_endpoint" "ep_gp_{{ ep_name }}" {
   name                     = "{{ ep_name }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+  enabled                  = true
 }
 
 resource "azurerm_cdn_frontdoor_origin_group" "og_gp_{{ ep_name }}" {
@@ -318,6 +382,12 @@ resource "azurerm_cdn_frontdoor_origin" "origin_gp_{{ ep_name }}" {
   priority                      = 1
   weight                        = 1000
   certificate_name_check_enabled = {{ "true" if strict_cert else "false" }}
+  enabled                       = true
+}
+
+resource "time_sleep" "wait_gp_{{ ep_name }}" {
+  create_duration = "30s"
+  depends_on = [azurerm_cdn_frontdoor_origin.origin_gp_{{ ep_name }}]
 }
 
 resource "azurerm_cdn_frontdoor_route" "route_gp_{{ ep_name }}" {
@@ -329,6 +399,14 @@ resource "azurerm_cdn_frontdoor_route" "route_gp_{{ ep_name }}" {
   supported_protocols           = ["Http", "Https"]
   forwarding_protocol           = "MatchRequest"
   https_redirect_enabled        = true
+  enabled                       = true
+
+  depends_on = [
+    time_sleep.wait_gp_{{ ep_name }},
+    azurerm_cdn_frontdoor_endpoint.ep_gp_{{ ep_name }},
+    azurerm_cdn_frontdoor_origin_group.og_gp_{{ ep_name }},
+    azurerm_cdn_frontdoor_origin.origin_gp_{{ ep_name }},
+  ]
 }
 
     {% endfor %}
