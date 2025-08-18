@@ -1,349 +1,363 @@
-{% if warhorse.vm|regex_search("(?i).+('cdn':.+'provider':\s'azure')", multiline=True, ignorecase=True) %}
-resource "azurerm_cdn_profile" "cdn_profile_{{ warhorse.general.op_number }}" {
+{#------------------------------------------------------------------------------
+Azure Front Door (Standard) replacement for deprecated Azure CDN (classic)
+- Creates one Front Door profile per op_number if any vm.*.cdn entries use provider 'azure'
+- For each tool (cobaltstrike, mythic, nighthawk, evilginx2, gophish):
+    * Endpoint (public host)
+    * Origin Group + Origin (your backend host)
+    * Route: forwards all paths, HTTPS redirect on, no caching behavior specified (origin-driven)
+    * Optional Rule Set: if auth header gating enabled, redirect to safe hostname when header missing
+- Ensures redirect hostnames have no scheme
+- Sets origin_host_header to actual origin host (SNI/virtual host correctness)
+------------------------------------------------------------------------------#}
+
+{% set has_azure_cdn = (warhorse | to_nice_json | regex_search('(?i)"provider"\\s*:\\s*"azure"')) %}
+
+{% if has_azure_cdn %}
+resource "azurerm_cdn_frontdoor_profile" "afd_profile_{{ warhorse.general.op_number }}" {
   name                = "{{ warhorse.general.op_number }}"
-  location            = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.location
   resource_group_name = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.name
-  sku                 = "Standard_Microsoft"
+  sku_name            = "Standard_AzureFrontDoor"
 }
 {% endif %}
+
+{# Helper Jinja macro to strip scheme from a hostname-ish value #}
+{% macro noscheme(value, default) -%}
+{{ (value | default(default) | replace('https://','') | replace('http://','')) }}
+{%- endmacro %}
+
 {% for vm in warhorse.vm %}
-{% set outer_loop = loop %}
-{% if vm.cobaltstrike.cdn is defined %}
-{% for cdn in vm.cobaltstrike.cdn %}
-{% if cdn.provider == 'azure' and vm.cobaltstrike.auth_header is defined and false %}
-resource "azurerm_cdn_endpoint" "cdn_endpoint_{{ cdn.hostname }}" {
-  name                = "{{ cdn.hostname }}"
-  profile_name        = azurerm_cdn_profile.cdn_profile_{{ warhorse.general.op_number }}.name
-  location            = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.location
-  resource_group_name = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.name
-  origin_host_header  = "cs-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  querystring_caching_behaviour = "BypassCaching"
 
-  origin {
-    name      = "{{ cdn.hostname }}"
-    host_name = "cs-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  }
+  {# ======================== COBALT STRIKE ======================== #}
+  {% if vm.cobaltstrike.cdn is defined %}
+    {% for cdn in vm.cobaltstrike.cdn %}
+      {% if cdn.provider == 'azure' %}
+        {% set origin_host = "cs-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
+        {% set pub_host    = cdn.hostname %}
+        {% set gate_on     = (vm.cobaltstrike.auth_header is defined and vm.cobaltstrike.auth_header) %}
+        {% set gate_name   = (vm.cobaltstrike.auth_header_name | default(auth_header_name)) %}
+        {% set gate_value  = (vm.cobaltstrike.auth_header_value | default(auth_header_value)) %}
+        {% set redir_host  = noscheme(cdn.redirect_domain, 'azure.microsoft.com') %}
 
-  delivery_rule{
-    name = "nocache"
-    order = 1
-    
-    query_string_condition {
-      operator = "Any"
-    }
-
-    
-    url_path_condition {
-      operator = "Any"
-    }
-
-    cache_expiration_action {
-      behavior =  "BypassCache"
-    }
-  }
+resource "azurerm_cdn_frontdoor_endpoint" "ep_cs_{{ pub_host }}" {
+  name                     = "{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
 }
-{% endif %}
-{% if cdn.provider == 'azure' and vm.cobaltstrike.auth_header is defined and true %}
-resource "azurerm_cdn_endpoint" "cdn_endpoint_{{ cdn.hostname }}" {
-  name                = "{{ cdn.hostname }}"
-  profile_name        = azurerm_cdn_profile.cdn_profile_{{ warhorse.general.op_number }}.name
-  location            = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.location
-  resource_group_name = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.name
-  origin_host_header  = "cs-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  querystring_caching_behaviour = "BypassCaching"
 
-  origin {
-    name      = "{{ cdn.hostname }}"
-    host_name = "cs-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  }
+resource "azurerm_cdn_frontdoor_origin_group" "og_cs_{{ pub_host }}" {
+  name                     = "og-{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+  session_affinity_enabled = false
+}
 
-  delivery_rule{
-    name = "nocache"
-    order = 1
-    
-    query_string_condition {
-      operator = "Any"
-    }
+resource "azurerm_cdn_frontdoor_origin" "origin_cs_{{ pub_host }}" {
+  name                          = "{{ origin_host }}"
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_cs_{{ pub_host }}.id
+  host_name                     = "{{ origin_host }}"
+  http_port                     = 80
+  https_port                    = 443
+  origin_host_header            = "{{ origin_host }}"
+  priority                      = 1
+  weight                        = 1000
+}
 
-    
-    url_path_condition {
-      operator = "Any"
-    }
+{% if gate_on %}
+resource "azurerm_cdn_frontdoor_rule_set" "rs_cs_{{ pub_host }}" {
+  name                     = "rs-{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+}
 
-    cache_expiration_action {
-      behavior =  "BypassCache"
-    }
-  }
+# Redirect when REQUIRED header is MISSING (negate_condition = true)
+resource "azurerm_cdn_frontdoor_rule" "rule_cs_{{ pub_host }}" {
+  name        = "redirect-if-missing-header"
+  rule_set_id = azurerm_cdn_frontdoor_rule_set.rs_cs_{{ pub_host }}.id
+  order       = 1
 
-  delivery_rule{
-    name = "header"
-    order = 2
+  conditions {
     request_header_condition {
-      selector = "{{ vm.cobaltstrike.auth_header_name | default(auth_header_name) }}"
-      operator = "Equal"
+      selector         = "{{ gate_name }}"
+      operator         = "Equal"
+      match_values     = ["{{ gate_value }}"]
       negate_condition = true
-      match_values = ["{{ vm.cobaltstrike.auth_header_value | default(auth_header_value) }}"]
+      transforms       = []
     }
+  }
 
+  actions {
     url_redirect_action {
-      redirect_type = "PermanentRedirect"
-      hostname = "{{ cdn.redirect_domain |default('azure.microsoft.com') }}"
+      redirect_type        = "Moved"
+      destination_hostname = "{{ redir_host }}"
     }
   }
 }
 {% endif %}
-{% endfor %}
-{% endif %}
-{% endfor %}
-{% for vm in warhorse.vm %}
-{% set outer_loop = loop %}
-{% if vm.mythic.cdn is defined %}
-{% for cdn in vm.mythic.cdn %}
-{% if cdn.provider == 'azure' and vm.mythic.auth_header is not true %}
-resource "azurerm_cdn_endpoint" "cdn_endpoint_{{ cdn.hostname }}" {
-  name                = "{{ cdn.hostname }}"
-  profile_name        = azurerm_cdn_profile.cdn_profile_{{ warhorse.general.op_number }}.name
-  location            = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.location
-  resource_group_name = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.name
-  origin_host_header  = "mythic-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  querystring_caching_behaviour = "BypassCaching"
 
-  origin {
-    name      = "{{ cdn.hostname }}"
-    host_name = "mythic-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  }
-
-  delivery_rule{
-    name = "nocache"
-    order = 1
-    
-    query_string_condition {
-      operator = "Any"
-    }
-
-    
-    url_path_condition {
-      operator = "Any"
-    }
-
-    cache_expiration_action {
-      behavior =  "BypassCache"
-    }
-  }
+resource "azurerm_cdn_frontdoor_route" "route_cs_{{ pub_host }}" {
+  name                              = "route-{{ pub_host }}"
+  cdn_frontdoor_endpoint_id         = azurerm_cdn_frontdoor_endpoint.ep_cs_{{ pub_host }}.id
+  cdn_frontdoor_origin_group_id     = azurerm_cdn_frontdoor_origin_group.og_cs_{{ pub_host }}.id
+  cdn_frontdoor_origin_ids          = [azurerm_cdn_frontdoor_origin.origin_cs_{{ pub_host }}.id]
+  patterns_to_match                 = ["/*"]
+  supported_protocols               = ["Http", "Https"]
+  forwarding_protocol               = "MatchRequest"
+  https_redirect_enabled            = true
+  {%- if gate_on %}
+  rule_sets                         = [azurerm_cdn_frontdoor_rule_set.rs_cs_{{ pub_host }}.id]
+  {%- endif %}
 }
-{% endif %}
-{% if cdn.provider == 'azure' and vm.mythic.auth_header is defined and true %}
-resource "azurerm_cdn_endpoint" "cdn_endpoint_{{ cdn.hostname }}" {
-  name                = "{{ cdn.hostname }}"
-  profile_name        = azurerm_cdn_profile.cdn_profile_{{ warhorse.general.op_number }}.name
-  location            = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.location
-  resource_group_name = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.name
-  origin_host_header  = "mythic-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  querystring_caching_behaviour = "BypassCaching"
 
-  origin {
-    name      = "{{ cdn.hostname }}"
-    host_name = "mythic-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  }
+      {% endif %}
+    {% endfor %}
+  {% endif %}
 
-  delivery_rule{
-    name = "nocache"
-    order = 1
-    
-    query_string_condition {
-      operator = "Any"
-    }
+  {# ========================== MYTHIC ============================= #}
+  {% if vm.mythic.cdn is defined %}
+    {% for cdn in vm.mythic.cdn %}
+      {% if cdn.provider == 'azure' %}
+        {% set origin_host = "mythic-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
+        {% set pub_host    = cdn.hostname %}
+        {% set gate_on     = (vm.mythic.auth_header is defined and vm.mythic.auth_header) %}
+        {% set gate_name   = (vm.mythic.auth_header_name | default(auth_header_name)) %}
+        {% set gate_value  = (vm.mythic.auth_header_value | default(auth_header_value)) %}
+        {% set redir_host  = noscheme((cdn.redirect_domain | default(cdn.redirect_url)), 'azure.microsoft.com') %}
 
-    
-    url_path_condition {
-      operator = "Any"
-    }
+resource "azurerm_cdn_frontdoor_endpoint" "ep_mythic_{{ pub_host }}" {
+  name                     = "{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+}
 
-    cache_expiration_action {
-      behavior =  "BypassCache"
-    }
-  }
+resource "azurerm_cdn_frontdoor_origin_group" "og_mythic_{{ pub_host }}" {
+  name                     = "og-{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+  session_affinity_enabled = false
+}
 
-  delivery_rule{
-    name = "header"
-    order = 2
+resource "azurerm_cdn_frontdoor_origin" "origin_mythic_{{ pub_host }}" {
+  name                          = "{{ origin_host }}"
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_mythic_{{ pub_host }}.id
+  host_name                     = "{{ origin_host }}"
+  http_port                     = 80
+  https_port                    = 443
+  origin_host_header            = "{{ origin_host }}"
+  priority                      = 1
+  weight                        = 1000
+}
+
+{% if gate_on %}
+resource "azurerm_cdn_frontdoor_rule_set" "rs_mythic_{{ pub_host }}" {
+  name                     = "rs-{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+}
+
+resource "azurerm_cdn_frontdoor_rule" "rule_mythic_{{ pub_host }}" {
+  name        = "redirect-if-missing-header"
+  rule_set_id = azurerm_cdn_frontdoor_rule_set.rs_mythic_{{ pub_host }}.id
+  order       = 1
+
+  conditions {
     request_header_condition {
-      selector = "{{ vm.mythic.auth_header_name | default(auth_header_name) }}"
-      operator = "Equal"
+      selector         = "{{ gate_name }}"
+      operator         = "Equal"
+      match_values     = ["{{ gate_value }}"]
       negate_condition = true
-      match_values = ["{{ vm.mythic.auth_header_value | default(auth_header_value) }}"]
+      transforms       = []
     }
+  }
 
+  actions {
     url_redirect_action {
-      redirect_type = "PermanentRedirect"
-      hostname = "{{ cdn.redirect_url |default('https://azure.microsoft.com') }}"
+      redirect_type        = "Moved"
+      destination_hostname = "{{ redir_host }}"
     }
   }
 }
 {% endif %}
-{% endfor %}
-{% endif %}
-{% endfor %}
-{% for vm in warhorse.vm %}
-{% set outer_loop = loop %}
-{% if vm.nighthawk.cdn is defined %}
-{% for cdn in vm.nighthawk.cdn %}
-{% if cdn.provider == 'azure' and vm.nighthawk.auth_header is not true %}
-resource "azurerm_cdn_endpoint" "cdn_endpoint_{{ cdn.hostname }}" {
-  name                = "{{ cdn.hostname }}"
-  profile_name        = azurerm_cdn_profile.cdn_profile_{{ warhorse.general.op_number }}.name
-  location            = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.location
-  resource_group_name = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.name
-  origin_host_header  = "nh-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  querystring_caching_behaviour = "BypassCaching"
 
-  origin {
-    name      = "{{ cdn.hostname }}"
-    host_name = "nh-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  }
-
-  delivery_rule{
-    name = "nocache"
-    order = 1
-    
-    query_string_condition {
-      operator = "Any"
-    }
-
-    
-    url_path_condition {
-      operator = "Any"
-    }
-
-    cache_expiration_action {
-      behavior =  "BypassCache"
-    }
-  }
+resource "azurerm_cdn_frontdoor_route" "route_mythic_{{ pub_host }}" {
+  name                              = "route-{{ pub_host }}"
+  cdn_frontdoor_endpoint_id         = azurerm_cdn_frontdoor_endpoint.ep_mythic_{{ pub_host }}.id
+  cdn_frontdoor_origin_group_id     = azurerm_cdn_frontdoor_origin_group.og_mythic_{{ pub_host }}.id
+  cdn_frontdoor_origin_ids          = [azurerm_cdn_frontdoor_origin.origin_mythic_{{ pub_host }}.id]
+  patterns_to_match                 = ["/*"]
+  supported_protocols               = ["Http", "Https"]
+  forwarding_protocol               = "MatchRequest"
+  https_redirect_enabled            = true
+  {%- if gate_on %}
+  rule_sets                         = [azurerm_cdn_frontdoor_rule_set.rs_mythic_{{ pub_host }}.id]
+  {%- endif %}
 }
-{% endif %}
-{% if cdn.provider == 'azure' and vm.nighthawk.auth_header is defined and true %}
-resource "azurerm_cdn_endpoint" "cdn_endpoint_{{ cdn.hostname }}" {
-  name                = "{{ cdn.hostname }}"
-  profile_name        = azurerm_cdn_profile.cdn_profile_{{ warhorse.general.op_number }}.name
-  location            = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.location
-  resource_group_name = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.name
-  origin_host_header  = "nh-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  querystring_caching_behaviour = "BypassCaching"
 
-  origin {
-    name      = "{{ cdn.hostname }}"
-    host_name = "nh-{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  }
+      {% endif %}
+    {% endfor %}
+  {% endif %}
 
-  delivery_rule{
-    name = "nocache"
-    order = 1
-    
-    query_string_condition {
-      operator = "Any"
-    }
+  {# ========================= NIGHTHAWK =========================== #}
+  {% if vm.nighthawk.cdn is defined %}
+    {% for cdn in vm.nighthawk.cdn %}
+      {% if cdn.provider == 'azure' %}
+        {% set origin_host = "nh-" ~ vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
+        {% set pub_host    = cdn.hostname %}
+        {% set gate_on     = (vm.nighthawk.auth_header is defined and vm.nighthawk.auth_header) %}
+        {% set gate_name   = (vm.nighthawk.auth_header_name | default(auth_header_name)) %}
+        {% set gate_value  = (vm.nighthawk.auth_header_value | default(auth_header_value)) %}
+        {% set redir_host  = noscheme(cdn.redirect_domain, 'azure.microsoft.com') %}
 
-    
-    url_path_condition {
-      operator = "Any"
-    }
+resource "azurerm_cdn_frontdoor_endpoint" "ep_nh_{{ pub_host }}" {
+  name                     = "{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+}
 
-    cache_expiration_action {
-      behavior =  "BypassCache"
-    }
-  }
+resource "azurerm_cdn_frontdoor_origin_group" "og_nh_{{ pub_host }}" {
+  name                     = "og-{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+  session_affinity_enabled = false
+}
 
-  delivery_rule{
-    name = "header"
-    order = 2
+resource "azurerm_cdn_frontdoor_origin" "origin_nh_{{ pub_host }}" {
+  name                          = "{{ origin_host }}"
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_nh_{{ pub_host }}.id
+  host_name                     = "{{ origin_host }}"
+  http_port                     = 80
+  https_port                    = 443
+  origin_host_header            = "{{ origin_host }}"
+  priority                      = 1
+  weight                        = 1000
+}
+
+{% if gate_on %}
+resource "azurerm_cdn_frontdoor_rule_set" "rs_nh_{{ pub_host }}" {
+  name                     = "rs-{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+}
+
+resource "azurerm_cdn_frontdoor_rule" "rule_nh_{{ pub_host }}" {
+  name        = "redirect-if-missing-header"
+  rule_set_id = azurerm_cdn_frontdoor_rule_set.rs_nh_{{ pub_host }}.id
+  order       = 1
+
+  conditions {
     request_header_condition {
-      selector = "{{ vm.nighthawk.auth_header_name | default(auth_header_name) }}"
-      operator = "Equal"
+      selector         = "{{ gate_name }}"
+      operator         = "Equal"
+      match_values     = ["{{ gate_value }}"]
       negate_condition = true
-      match_values = ["{{ vm.nighthawk.auth_header_value | default(auth_header_value) }}"]
+      transforms       = []
     }
+  }
 
+  actions {
     url_redirect_action {
-      redirect_type = "PermanentRedirect"
-      hostname = "{{ cdn.redirect_url |default('azure.microsoft.com') }}"
+      redirect_type        = "Moved"
+      destination_hostname = "{{ redir_host }}"
     }
   }
 }
 {% endif %}
-{% endfor %}
-{% endif %}
-{% if vm.evilginx2.cdn is defined %}
-{% for cdn in vm.evilginx2.cdn %}
-{% if cdn.provider == 'azure' %}
-resource "azurerm_cdn_endpoint" "cdn_endpoint_{{ cdn.hostname }}" {
-  name                = "{{ cdn.hostname }}"
-  profile_name        = azurerm_cdn_profile.cdn_profile_{{ warhorse.general.op_number }}.name
-  location            = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.location
-  resource_group_name = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.name
-  origin_host_header  = "{{ cdn.hostname }}.azureedge.net"
-  querystring_caching_behaviour = "BypassCaching"
 
-  origin {
-    name      = "{{ cdn.hostname }}"
-    host_name = "{{ vm.name }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  }
-
-  delivery_rule{
-    name = "nocache"
-    order = 1
-    
-    query_string_condition {
-      operator = "Any"
-    }
-
-    
-    url_path_condition {
-      operator = "Any"
-    }
-
-    cache_expiration_action {
-      behavior =  "BypassCache"
-    }
-  }
+resource "azurerm_cdn_frontdoor_route" "route_nh_{{ pub_host }}" {
+  name                              = "route-{{ pub_host }}"
+  cdn_frontdoor_endpoint_id         = azurerm_cdn_frontdoor_endpoint.ep_nh_{{ pub_host }}.id
+  cdn_frontdoor_origin_group_id     = azurerm_cdn_frontdoor_origin_group.og_nh_{{ pub_host }}.id
+  cdn_frontdoor_origin_ids          = [azurerm_cdn_frontdoor_origin.origin_nh_{{ pub_host }}.id]
+  patterns_to_match                 = ["/*"]
+  supported_protocols               = ["Http", "Https"]
+  forwarding_protocol               = "MatchRequest"
+  https_redirect_enabled            = true
+  {%- if gate_on %}
+  rule_sets                         = [azurerm_cdn_frontdoor_rule_set.rs_nh_{{ pub_host }}.id]
+  {%- endif %}
 }
-{% endif %}
-{% endfor %}
-{% endif %}
-{% if vm.gophish.cdn is defined %}
-{% for cdn in vm.gophish.cdn %}
-{% if cdn.provider == 'azure' %}
-resource "azurerm_cdn_endpoint" "cdn_endpoint_{{ cdn.hostname }}" {
-  name                = "{{ cdn.hostname }}"
-  profile_name        = azurerm_cdn_profile.cdn_profile_{{ warhorse.general.op_number }}.name
-  location            = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.location
-  resource_group_name = azurerm_resource_group.azure_resource_{{ warhorse.general.op_number }}.name
-  origin_host_header  = "{{ vm.gophish.site_hostname }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  querystring_caching_behaviour = "BypassCaching"
 
-  origin {
-    name      = "{{ cdn.hostname }}"
-    host_name = "{{ vm.gophish.site_hostname }}.{{ warhorse.dns.op_domain_name|default(dns_op_domain_name)}}"
-  }
+      {% endif %}
+    {% endfor %}
+  {% endif %}
 
-  delivery_rule{
-    name = "nocache"
-    order = 1
-    
-    query_string_condition {
-      operator = "Any"
-    }
+  {# ========================== EVILGINX2 ========================== #}
+  {% if vm.evilginx2.cdn is defined %}
+    {% for cdn in vm.evilginx2.cdn %}
+      {% if cdn.provider == 'azure' %}
+        {% set origin_host = vm.name ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
+        {% set pub_host    = cdn.hostname %}
 
-    
-    url_path_condition {
-      operator = "Any"
-    }
-
-    cache_expiration_action {
-      behavior =  "BypassCache"
-    }
-  }
+resource "azurerm_cdn_frontdoor_endpoint" "ep_eg2_{{ pub_host }}" {
+  name                     = "{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
 }
-{% endif %}
-{% endfor %}
-{% endif %}
+
+resource "azurerm_cdn_frontdoor_origin_group" "og_eg2_{{ pub_host }}" {
+  name                     = "og-{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+  session_affinity_enabled = false
+}
+
+resource "azurerm_cdn_frontdoor_origin" "origin_eg2_{{ pub_host }}" {
+  name                          = "{{ origin_host }}"
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_eg2_{{ pub_host }}.id
+  host_name                     = "{{ origin_host }}"
+  http_port                     = 80
+  https_port                    = 443
+  origin_host_header            = "{{ origin_host }}"
+  priority                      = 1
+  weight                        = 1000
+}
+
+resource "azurerm_cdn_frontdoor_route" "route_eg2_{{ pub_host }}" {
+  name                              = "route-{{ pub_host }}"
+  cdn_frontdoor_endpoint_id         = azurerm_cdn_frontdoor_endpoint.ep_eg2_{{ pub_host }}.id
+  cdn_frontdoor_origin_group_id     = azurerm_cdn_frontdoor_origin_group.og_eg2_{{ pub_host }}.id
+  cdn_frontdoor_origin_ids          = [azurerm_cdn_frontdoor_origin.origin_eg2_{{ pub_host }}.id]
+  patterns_to_match                 = ["/*"]
+  supported_protocols               = ["Http", "Https"]
+  forwarding_protocol               = "MatchRequest"
+  https_redirect_enabled            = true
+}
+
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+
+  {# ============================ GOPHISH ========================== #}
+  {% if vm.gophish.cdn is defined %}
+    {% for cdn in vm.gophish.cdn %}
+      {% if cdn.provider == 'azure' %}
+        {% set site_host  = vm.gophish.site_hostname ~ "." ~ (warhorse.dns.op_domain_name | default(dns_op_domain_name)) %}
+        {% set origin_host = site_host %}
+        {% set pub_host    = cdn.hostname %}
+
+resource "azurerm_cdn_frontdoor_endpoint" "ep_gp_{{ pub_host }}" {
+  name                     = "{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+}
+
+resource "azurerm_cdn_frontdoor_origin_group" "og_gp_{{ pub_host }}" {
+  name                     = "og-{{ pub_host }}"
+  cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
+  session_affinity_enabled = false
+}
+
+resource "azurerm_cdn_frontdoor_origin" "origin_gp_{{ pub_host }}" {
+  name                          = "{{ origin_host }}"
+  cdn_frontdoor_origin_group_id = azurerm_cdn_frontdoor_origin_group.og_gp_{{ pub_host }}.id
+  host_name                     = "{{ origin_host }}"
+  http_port                     = 80
+  https_port                    = 443
+  origin_host_header            = "{{ origin_host }}"
+  priority                      = 1
+  weight                        = 1000
+}
+
+resource "azurerm_cdn_frontdoor_route" "route_gp_{{ pub_host }}" {
+  name                              = "route-{{ pub_host }}"
+  cdn_frontdoor_endpoint_id         = azurerm_cdn_frontdoor_endpoint.ep_gp_{{ pub_host }}.id
+  cdn_frontdoor_origin_group_id     = azurerm_cdn_frontdoor_origin_group.og_gp_{{ pub_host }}.id
+  cdn_frontdoor_origin_ids          = [azurerm_cdn_frontdoor_origin.origin_gp_{{ pub_host }}.id]
+  patterns_to_match                 = ["/*"]
+  supported_protocols               = ["Http", "Https"]
+  forwarding_protocol               = "MatchRequest"
+  https_redirect_enabled            = true
+}
+
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+
 {% endfor %}
