@@ -47,6 +47,21 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_cs_{{ pub_host }}" {
   name                     = "og-{{ pub_host }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
   session_affinity_enabled = false
+
+  # REQUIRED by provider
+  load_balancing {
+    sample_size                          = 4
+    successful_samples_required          = 3
+    additional_latency_in_milliseconds   = 0
+  }
+
+  # Recommended health probe
+  health_probe {
+    protocol            = "Https"
+    request_type        = "GET"
+    path                = "/"
+    interval_in_seconds = 120
+  }
 }
 
 resource "azurerm_cdn_frontdoor_origin" "origin_cs_{{ pub_host }}" {
@@ -129,6 +144,19 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_mythic_{{ pub_host }}" {
   name                     = "og-{{ pub_host }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
   session_affinity_enabled = false
+
+  load_balancing {
+    sample_size                        = 4
+    successful_samples_required        = 3
+    additional_latency_in_milliseconds = 0
+  }
+
+  health_probe {
+    protocol            = "Https"
+    request_type        = "GET"
+    path                = "/"
+    interval_in_seconds = 120
+  }
 }
 
 resource "azurerm_cdn_frontdoor_origin" "origin_mythic_{{ pub_host }}" {
@@ -210,6 +238,19 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_nh_{{ pub_host }}" {
   name                     = "og-{{ pub_host }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
   session_affinity_enabled = false
+
+  load_balancing {
+    sample_size                        = 4
+    successful_samples_required        = 3
+    additional_latency_in_milliseconds = 0
+  }
+
+  health_probe {
+    protocol            = "Https"
+    request_type        = "GET"
+    path                = "/"
+    interval_in_seconds = 120
+  }
 }
 
 resource "azurerm_cdn_frontdoor_origin" "origin_nh_{{ pub_host }}" {
@@ -287,6 +328,19 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_eg2_{{ pub_host }}" {
   name                     = "og-{{ pub_host }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
   session_affinity_enabled = false
+
+  load_balancing {
+    sample_size                        = 4
+    successful_samples_required        = 3
+    additional_latency_in_milliseconds = 0
+  }
+
+  health_probe {
+    protocol            = "Https"
+    request_type        = "GET"
+    path                = "/"
+    interval_in_seconds = 120
+  }
 }
 
 resource "azurerm_cdn_frontdoor_origin" "origin_eg2_{{ pub_host }}" {
@@ -332,6 +386,19 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_gp_{{ pub_host }}" {
   name                     = "og-{{ pub_host }}"
   cdn_frontdoor_profile_id = azurerm_cdn_frontdoor_profile.afd_profile_{{ warhorse.general.op_number }}.id
   session_affinity_enabled = false
+
+  load_balancing {
+    sample_size                        = 4
+    successful_samples_required        = 3
+    additional_latency_in_milliseconds = 0
+  }
+
+  health_probe {
+    protocol            = "Https"
+    request_type        = "GET"
+    path                = "/"
+    interval_in_seconds = 120
+  }
 }
 
 resource "azurerm_cdn_frontdoor_origin" "origin_gp_{{ pub_host }}" {
