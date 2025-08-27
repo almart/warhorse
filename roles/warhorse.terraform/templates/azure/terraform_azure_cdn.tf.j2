@@ -54,12 +54,6 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_cs_{{ ep_name }}" {
     additional_latency_in_milliseconds = 0
   }
 
-  health_probe {
-    protocol            = "Https"
-    request_type        = "GET"
-    path                = "/"
-    interval_in_seconds = 120
-  }
 }
 
 resource "azurerm_cdn_frontdoor_origin" "origin_cs_{{ ep_name }}" {
@@ -135,12 +129,6 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_mythic_{{ ep_name }}" {
     additional_latency_in_milliseconds = 0
   }
 
-  health_probe {
-    protocol            = "Https"
-    request_type        = "GET"
-    path                = "/"
-    interval_in_seconds = 120
-  }
 }
 
 resource "azurerm_cdn_frontdoor_origin" "origin_mythic_{{ ep_name }}" {
@@ -210,12 +198,7 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_nh_{{ ep_name }}" {
     additional_latency_in_milliseconds = 0
   }
 
-  health_probe {
-    protocol            = "Https"
-    request_type        = "GET"
-    path                = "/"
-    interval_in_seconds = 120
-  }
+
 }
 
 resource "azurerm_cdn_frontdoor_origin" "origin_nh_{{ ep_name }}" {
@@ -285,12 +268,7 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_eg2_{{ ep_name }}" {
     additional_latency_in_milliseconds = 0
   }
 
-  health_probe {
-    protocol            = "Https"
-    request_type        = "GET"
-    path                = "/"
-    interval_in_seconds = 120
-  }
+
 }
 
 resource "azurerm_cdn_frontdoor_origin" "origin_eg2_{{ ep_name }}" {
@@ -364,12 +342,7 @@ resource "azurerm_cdn_frontdoor_origin_group" "og_gp_{{ ep_name }}" {
     additional_latency_in_milliseconds = 0
   }
 
-  health_probe {
-    protocol            = "Https"
-    request_type        = "GET"
-    path                = "/"
-    interval_in_seconds = 120
-  }
+
 }
 
 resource "azurerm_cdn_frontdoor_origin" "origin_gp_{{ ep_name }}" {
