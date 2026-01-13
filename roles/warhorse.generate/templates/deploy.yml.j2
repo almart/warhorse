@@ -39,7 +39,14 @@
     register: apt_status
     until: apt_status is success
     delay: 10
-    retries: 10 
+    retries: 10
+  - name: Upgrade packages
+    apt:
+      upgrade: dist
+    register: upgrade_status
+    until: upgrade_status is success
+    delay: 10
+    retries: 5      
 
 {% for vm in warhorse.vm %}  
 {% if loop.first %}

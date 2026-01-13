@@ -30,6 +30,9 @@ all:
               traefik_ports:
                 - '80:80'
                 - '443:443'
+{% if vm.traefik.dashboard is true %}
+                - '8080:8080'
+{% endif %}                
               traefik_labels:
                 traefik.http.routers.traefik.tls: "true"
                 traefik.http.routers.traefik.tls.certresolver: "letsencrypt"
@@ -72,10 +75,16 @@ all:
               traefik_confkey_accessLog:
                 filePath: "/etc/traefik/log/access.log"
                 bufferingSize: 100
+                format: json
+                fields:
+                  headers:
+                    defaultMode: keep
 
               traefik_confkey_entryPoints:
                 http:
                   address: ':80'
+                  forwardedHeaders:
+                    insecure: true
                   http:
                     redirections:
                       entryPoint:
@@ -83,6 +92,8 @@ all:
                         scheme: 'https'
                 websecure:
                   address: ':443'
+                  forwardedHeaders:
+                    insecure: true
                   http:
                     tls:
                       certResolver: 'letsencrypt'
